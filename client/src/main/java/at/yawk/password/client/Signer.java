@@ -21,6 +21,8 @@ class Signer extends MessageToMessageEncoder<EncryptedBlob> {
 
     @Override
     protected void encode(ChannelHandlerContext ctx, EncryptedBlob msg, List<Object> out) throws Exception {
+        System.out.println("Signing " + msg);
+
         ByteBuf bodyBuf = Unpooled.buffer();
         msg.write(bodyBuf);
         byte[] body = Encoding.toByteArray(bodyBuf);

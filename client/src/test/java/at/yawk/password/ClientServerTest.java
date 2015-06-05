@@ -19,7 +19,7 @@ public class ClientServerTest {
 
     private PasswordServer server;
 
-    static byte[] randomBytes(int len) {
+    public static byte[] randomBytes(int len) {
         byte[] bytes = new byte[len];
         ThreadLocalRandom.current().nextBytes(bytes);
         return bytes;
@@ -27,12 +27,13 @@ public class ClientServerTest {
 
     @BeforeTest
     public void open() {
-        server = new PasswordServer(new MemoryStorageProvider());
+        server = PasswordServer.create();
+        server.setStorageProvider(new MemoryStorageProvider());
         server.bind(PORT);
     }
 
     @AfterTest
-    public void close() {
+    public void close() throws Exception {
         server.close();
     }
 
@@ -42,11 +43,14 @@ public class ClientServerTest {
 
         PasswordClient client = createClient(password);
 
-        ClientValue<PasswordBlob> loaded = client.load(PasswordBlob.class);
+        // confirm we don't start with any blob
+        System.err.println("LOAD");
+        ClientValue<PasswordBlob> loaded = client.load();
         Assert.assertTrue(loaded.isFromLocalStorage());
         Assert.assertNull(loaded.getValue());
 
         // save a test blob to remote
+        System.err.println("SAVE");
         PasswordBlob testBlob = new PasswordBlob();
         testBlob.getPasswords().add(new PasswordEntry() {{
             setName("Name");
@@ -57,20 +61,22 @@ public class ClientServerTest {
         // load from remote twice: once with the same client, once with a new one
 
         // load the test blob back from remote
-        loaded = client.load(PasswordBlob.class);
+        System.err.println("LOAD");
+        loaded = client.load();
         Assert.assertFalse(loaded.isFromLocalStorage());
         Assert.assertEquals(testBlob, loaded.getValue());
 
         // recreate the client to clear out any cached data
         client = createClient(password);
         // load the test blob back from remote
-        loaded = client.load(PasswordBlob.class);
+        System.err.println("LOAD");
+        loaded = client.load();
         Assert.assertFalse(loaded.isFromLocalStorage());
         Assert.assertEquals(testBlob, loaded.getValue());
     }
 
     private static PasswordClient createClient(byte[] password) {
-        PasswordClient client = new PasswordClient();
+        PasswordClient client = PasswordClient.create();
         client.setRemote("localhost", PORT);
         client.setPassword(password);
         return client;

@@ -26,7 +26,8 @@ public class Main {
         LocalStorageProvider storageProvider = new MultiFileLocalStorageProvider(
                 directory.value(set).toPath());
 
-        PasswordServer server = new PasswordServer(storageProvider);
+        PasswordServer server = PasswordServer.create();
+        server.setStorageProvider(storageProvider);
         server.bind(port.value(set));
     }
 }

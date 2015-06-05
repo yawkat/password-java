@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lambdaworks.crypto.SCrypt;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageEncoder;
+import java.io.ByteArrayOutputStream;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.List;
 import javax.crypto.Cipher;
@@ -23,6 +25,17 @@ class Encrypter extends MessageToMessageEncoder<DecryptedBlob> {
     private static final int R = 8;
     private static final int P = 1;
     private static final int DK_LEN = 32;
+
+    static {
+        try {
+            if (Cipher.getMaxAllowedKeyLength("AES") < DK_LEN * 8) {
+                throw new RuntimeException(
+                        "You need to install the unlimited strength policy files for AES 256 to be supported.");
+            }
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
+    }
 
     private final ObjectMapper objectMapper;
     private final byte[] password;
@@ -57,10 +70,11 @@ class Encrypter extends MessageToMessageEncoder<DecryptedBlob> {
         mac.init(new SecretKeySpec(key, "HmacSHA512"));
         byte[] hmac = mac.doFinal(body);
 
-        Cipher encryptCipher = Cipher.getInstance("AES/CFB");
-        encryptCipher.init(DK_LEN * 8, new SecretKeySpec(key, "AES"));
-        encryptCipher.update(hmac);
-        encryptCipher.update(body);
+        Cipher encryptCipher = Cipher.getInstance("AES/CFB/NoPadding");
+        encryptCipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"));
+        byte[] encryptedBody = new byte[hmac.length + body.length];
+        encryptCipher.update(hmac, 0, hmac.length, encryptedBody, 0);
+        encryptCipher.doFinal(body, 0, body.length, encryptedBody, hmac.length);
 
         EncryptedBlob encryptedBlob = new EncryptedBlob();
         encryptedBlob.setDkLen(DK_LEN);
@@ -69,7 +83,7 @@ class Encrypter extends MessageToMessageEncoder<DecryptedBlob> {
         encryptedBlob.setP(P);
         encryptedBlob.setSalt(salt);
         encryptedBlob.setIv(encryptCipher.getIV());
-        encryptedBlob.setBody(encryptCipher.doFinal());
+        encryptedBlob.setBody(encryptedBody);
         return encryptedBlob;
     }
 }

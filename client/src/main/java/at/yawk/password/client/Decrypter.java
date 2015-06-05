@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.xml.bind.DatatypeConverter;
 import lombok.RequiredArgsConstructor;
@@ -40,8 +41,12 @@ class Decrypter extends MessageToMessageDecoder<EncryptedBlob> {
                 msg.getP(),
                 msg.getDkLen()
         );
-        Cipher decryptCipher = Cipher.getInstance("AES/CFB");
-        decryptCipher.init(msg.getDkLen() * 8, new SecretKeySpec(key, "AES"));
+        Cipher decryptCipher = Cipher.getInstance("AES/CFB/NoPadding");
+        decryptCipher.init(
+                Cipher.DECRYPT_MODE,
+                new SecretKeySpec(key, "AES"),
+                new IvParameterSpec(msg.getIv())
+        );
         byte[] dec = decryptCipher.doFinal(msg.getBody());
 
         Mac mac = Mac.getInstance("HmacSHA512");

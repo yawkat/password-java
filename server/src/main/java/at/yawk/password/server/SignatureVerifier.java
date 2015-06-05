@@ -14,6 +14,7 @@ import java.security.spec.X509EncodedKeySpec;
 class SignatureVerifier extends SimpleChannelInboundHandler<SignedBlob> {
     @Override
     protected void messageReceived(ChannelHandlerContext ctx, SignedBlob msg) throws Exception {
+        System.out.println("Verify " + msg);
         X509EncodedKeySpec keySpec = new X509EncodedKeySpec(msg.getKey());
         PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(keySpec);
         Signature signature = Signature.getInstance("SHA512withRSA");
