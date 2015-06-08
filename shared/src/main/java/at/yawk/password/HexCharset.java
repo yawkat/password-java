@@ -47,7 +47,7 @@ public class HexCharset extends Charset {
 
     @Override
     public CharsetEncoder newEncoder() {
-        return new CharsetEncoder(this, 0.5F, 0.5F) {
+        return new CharsetEncoder(this, 0.5F, 1) { // can't go below 1 on this
             @Override
             protected CoderResult encodeLoop(CharBuffer in, ByteBuffer out) {
                 if (out.remaining() < in.remaining() / 2) {

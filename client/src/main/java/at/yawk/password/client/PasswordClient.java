@@ -1,5 +1,6 @@
 package at.yawk.password.client;
 
+import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.model.PasswordBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.InetSocketAddress;
@@ -17,6 +18,8 @@ public interface PasswordClient extends AutoCloseable {
     }
 
     void setRemote(InetSocketAddress address);
+
+    void setLocalStorageProvider(LocalStorageProvider localStorageProvider);
 
     void setObjectMapper(ObjectMapper objectMapper);
 

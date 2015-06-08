@@ -3,6 +3,7 @@ package at.yawk.password.server;
 import at.yawk.password.model.SignedBlob;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -14,15 +15,18 @@ import java.security.spec.X509EncodedKeySpec;
 class SignatureVerifier extends SimpleChannelInboundHandler<SignedBlob> {
     @Override
     protected void messageReceived(ChannelHandlerContext ctx, SignedBlob msg) throws Exception {
-        System.out.println("Verify " + msg);
-        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(msg.getKey());
-        PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(keySpec);
-        Signature signature = Signature.getInstance("SHA512withRSA");
-        signature.initVerify(publicKey);
-        signature.update(msg.getBody());
-        if (!signature.verify(msg.getSignature())) {
+        if (!verify(msg.getKey(), msg.getBody(), msg.getSignature())) {
             throw new Exception("Invalid signature");
         }
         ctx.fireChannelRead(msg);
+    }
+
+    static boolean verify(byte[] key, byte[] data, byte[] signature) throws GeneralSecurityException {
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(key);
+        PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(keySpec);
+        Signature verifier = Signature.getInstance("SHA512withRSA");
+        verifier.initVerify(publicKey);
+        verifier.update(data);
+        return verifier.verify(signature);
     }
 }

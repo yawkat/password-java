@@ -14,12 +14,18 @@ public class Encoding {
         return bytes;
     }
 
+    public static void writeLengthPrefixedByteArray(ByteBuf buf, byte[] array) {
+        buf.writeInt(array.length);
+        buf.writeBytes(array);
+    }
+
     public static byte[] readLengthPrefixedByteArray(ByteBuf buf) {
-        if (!buf.isReadable()) {
+        if (buf.readableBytes() < 4) {
             return null;
         }
         int len = buf.readInt();
-        if (len > buf.readableBytes()) {
+        assert len >= 0 : len;
+        if (buf.readableBytes() < len) {
             return null;
         }
         byte[] bytes = new byte[len];

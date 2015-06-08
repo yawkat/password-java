@@ -17,23 +17,26 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.util.concurrent.Promise;
 import java.net.InetSocketAddress;
-import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
-import java.util.Base64;
+import java.util.Arrays;
 import javax.annotation.Nullable;
+import javax.xml.bind.DatatypeConverter;
 
 /**
  * @author yawkat
  */
 class PasswordClientImpl implements PasswordClient {
-    private LocalStorageProvider localStorageProvider = LocalStorageProvider.NOOP;
+    private LocalStorageProvider localStorageProvider;
     private ObjectMapper objectMapper;
     private Bootstrap bootstrap;
     private KeyPair rsaKeyPair;
     private byte[] password;
+
+    @Override
+    public void setLocalStorageProvider(LocalStorageProvider localStorageProvider) {
+        this.localStorageProvider = localStorageProvider;
+    }
 
     @Override
     public void setObjectMapper(ObjectMapper objectMapper) {
@@ -76,19 +79,15 @@ class PasswordClientImpl implements PasswordClient {
         if (value == null) {
             // either the remote errored or it doesn't have a blob yet
 
-            byte[] local = localStorageProvider.load();
+            value = tryLoadLocal();
             if (exception != null) {
-                if (local == null) {
-                    // we have no local blob to use and the remote errored
+                if (value == null) {
+                    // no local data, might as well throw the remote one
                     throw exception;
+                } else {
+                    // don't swallow
+                    exception.printStackTrace();
                 }
-                // the remote errored but we can fall back on a local copy
-                exception.printStackTrace();
-            }
-            if (local != null) {
-                EncryptedBlob encryptedBlob = new EncryptedBlob();
-                encryptedBlob.read(Unpooled.wrappedBuffer(local));
-                value = loadKeyPairAndMap(Decrypter.decrypt(objectMapper, local, encryptedBlob));
             }
             fromLocalStorage = true;
         }
@@ -96,7 +95,65 @@ class PasswordClientImpl implements PasswordClient {
     }
 
     @Nullable
+    private PasswordBlob tryLoadLocal() throws Exception {
+        byte[] local = localStorageProvider.load();
+        if (local != null) {
+            EncryptedBlob encryptedBlob = new EncryptedBlob();
+            encryptedBlob.read(Unpooled.wrappedBuffer(local));
+            return loadKeyPairAndMap(Decrypter.decrypt(objectMapper, password, encryptedBlob));
+        } else {
+            return null;
+        }
+    }
+
+    private byte[] loadChallenge() throws Exception {
+        Channel ch = bootstrap.connect().sync().channel();
+        Promise<byte[]> challengePromise = ch.eventLoop().newPromise();
+        ch.pipeline().addLast(new SimpleChannelInboundHandler<HttpObject>() {
+            ByteBuf buf = Unpooled.buffer();
+
+            @Override
+            protected void messageReceived(ChannelHandlerContext ctx, HttpObject msg) throws Exception {
+                if (msg instanceof HttpResponse) {
+                    if (((HttpResponse) msg).status().code() != 200) {
+                        challengePromise.setFailure(new Exception("Status " + ((HttpResponse) msg).status()));
+                        ctx.close();
+                        return;
+                    }
+                }
+                if (msg instanceof HttpContent) {
+                    ByteBuf content = ((HttpContent) msg).content();
+                    content.readBytes(buf, content.readableBytes());
+                }
+                if (msg instanceof LastHttpContent) {
+                    challengePromise.setSuccess(Arrays.copyOf(buf.array(), buf.readableBytes()));
+                    ctx.close();
+                }
+            }
+        });
+        ExceptionForwardingFutureListener.write(
+                ch, new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/challenge"));
+        ch.flush();
+        return challengePromise.sync().get();
+    }
+
+    @Nullable
     private PasswordBlob loadRemote() throws Exception {
+        if (rsaKeyPair == null) {
+            // try loading the key pair from local
+            tryLoadLocal();
+        }
+
+        byte[] challenge;
+        byte[] challengeSignature;
+        if (rsaKeyPair != null) {
+            challenge = loadChallenge();
+            challengeSignature = Signer.sign(rsaKeyPair.getPrivate(), challenge);
+        } else {
+            challenge = challengeSignature = null;
+            System.out.println("Could not find key pair in local, let's hope the remote doesn't have a key pair yet");
+        }
+
         Channel ch = bootstrap.connect().sync().channel();
         // value is nullable
         Promise<DecryptedBlob> decryptedBlobPromise = ch.eventLoop().newPromise();
@@ -117,7 +174,7 @@ class PasswordClientImpl implements PasswordClient {
                                 ctx.close();
                                 break;
                             default:
-                                decryptedBlobPromise.setFailure(new Exception("Invalid status: " + status));
+                                decryptedBlobPromise.setFailure(new Exception("Status: " + status));
                                 ctx.close();
                                 break;
                             }
@@ -132,10 +189,16 @@ class PasswordClientImpl implements PasswordClient {
                         ctx.close();
                     }
                 });
-        ch.write(new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/"))
-                .addListener(ExceptionForwardingFutureListener.create(ch));
+        DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/db");
+        if (challenge != null && challengeSignature != null) {
+            // add auth header
+            request.headers().add("Authorization",
+                                  "Signature " + DatatypeConverter.printHexBinary(challenge) +
+                                  " " + DatatypeConverter.printHexBinary(challengeSignature));
+        }
+        ch.write(request).addListener(ExceptionForwardingFutureListener.create(ch));
         ch.flush();
-        DecryptedBlob decrypted = decryptedBlobPromise.get();
+        DecryptedBlob decrypted = decryptedBlobPromise.sync().get();
         if (decrypted != null) {
             saveToStorage(decrypted);
         }
@@ -157,29 +220,28 @@ class PasswordClientImpl implements PasswordClient {
         if (decrypted == null) {
             return null;
         }
-        byte[] priEnc = Base64.getDecoder().decode(decrypted.getRsa().getPrivateKey());
-        byte[] pubEnc = Base64.getDecoder().decode(decrypted.getRsa().getPublicKey());
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        rsaKeyPair = new KeyPair(
-                keyFactory.generatePublic(new X509EncodedKeySpec(pubEnc)),
-                keyFactory.generatePrivate(new PKCS8EncodedKeySpec(priEnc))
-        );
+        rsaKeyPair = decrypted.getRsa().toKeyPair();
 
         return decrypted.getData();
     }
 
     @Override
     public void save(PasswordBlob data) throws Exception {
+        if (objectMapper == null) {
+            objectMapper = new ObjectMapper();
+        }
+
         if (rsaKeyPair == null) {
-            rsaKeyPair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+            gen.initialize(4096);
+            rsaKeyPair = gen.generateKeyPair();
         }
 
         DecryptedBlob decryptedBlob = new DecryptedBlob();
-        decryptedBlob.getRsa().setPrivateKey(
-                Base64.getEncoder().encodeToString(rsaKeyPair.getPrivate().getEncoded()));
-        decryptedBlob.getRsa().setPublicKey(
-                Base64.getEncoder().encodeToString(rsaKeyPair.getPublic().getEncoded()));
+        decryptedBlob.setRsa(DecryptedBlob.RsaKeyPair.ofKeyPair(rsaKeyPair));
         decryptedBlob.setData(data);
+
+        saveToStorage(decryptedBlob);
 
         Channel ch = bootstrap.connect().sync().channel();
         Promise<Void> completionPromise = ch.eventLoop().newPromise();
@@ -199,7 +261,7 @@ class PasswordClientImpl implements PasswordClient {
                         ctx.close();
                     }
                 });
-        DefaultHttpRequest request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
+        DefaultHttpRequest request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/db");
         request.headers().set("Transfer-Encoding", "Chunked");
         ch.write(request)
                 .addListener(ExceptionForwardingFutureListener.create(ch));

@@ -25,6 +25,8 @@ class PasswordServerImpl implements PasswordServer {
     private LocalStorageProvider storageProvider;
     private Optional<SignedBlob> data;
 
+    final ChallengeManager challengeManager = new ChallengeManager();
+
     {
         bootstrap = new ServerBootstrap();
         bootstrap.channel(NioServerSocketChannel.class);
@@ -61,7 +63,6 @@ class PasswordServerImpl implements PasswordServer {
         blob.write(buf);
         storageProvider.save(Encoding.toByteArray(buf));
         data = Optional.of(blob);
-        System.out.println("Data is now " + buf);
     }
 
     synchronized Optional<SignedBlob> getData() throws IOException {
@@ -114,15 +115,23 @@ class PasswordServerImpl implements PasswordServer {
         @Override
         protected void messageReceived(ChannelHandlerContext ctx, HttpRequest msg)
                 throws Exception {
-            if (msg.method().equals(HttpMethod.GET)) {
-                ctx.pipeline().addLast(new GetBlobRequestHandler(PasswordServerImpl.this));
-                ctx.fireChannelRead(msg);
-                return;
-            }
-            if (msg.method().equals(HttpMethod.POST)) {
-                ctx.pipeline().addLast(new SetBlobRequestHandler(PasswordServerImpl.this));
-                ctx.fireChannelRead(msg);
-                return;
+            if (msg.uri().equals("/db")) {
+                if (msg.method().equals(HttpMethod.GET)) {
+                    ctx.pipeline().addLast(new GetBlobRequestHandler(PasswordServerImpl.this));
+                    ctx.fireChannelRead(msg);
+                    return;
+                }
+                if (msg.method().equals(HttpMethod.POST)) {
+                    ctx.pipeline().addLast(new SetBlobRequestHandler(PasswordServerImpl.this));
+                    ctx.fireChannelRead(msg);
+                    return;
+                }
+            } else if (msg.uri().equals("/challenge")) {
+                if (msg.method().equals(HttpMethod.GET)) {
+                    ctx.pipeline().addLast(new GetChallengeRequestHandler(PasswordServerImpl.this));
+                    ctx.fireChannelRead(msg);
+                    return;
+                }
             }
 
             ctx.channel().write(new DefaultFullHttpResponse(msg.protocolVersion(), HttpResponseStatus.NOT_FOUND))
@@ -130,6 +139,5 @@ class PasswordServerImpl implements PasswordServer {
             ctx.channel().flush();
             ctx.channel().disconnect();
         }
-
     }
 }

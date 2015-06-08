@@ -17,6 +17,20 @@ public class SignedBlobTest {
     }
 
     @Test
+    public void testParse() {
+        SignedBlob blob = new SignedBlob();
+        blob.setKey(randomBytes(32));
+        blob.setSignature(randomBytes(64));
+        blob.setBody(randomBytes(1234));
+        ByteBuf buf = Unpooled.buffer();
+        blob.write(buf);
+        for (int i = 0; i < buf.readableBytes(); i++) {
+            boolean readFully = blob.read(buf.slice(0, i));
+            assert !readFully;
+        }
+    }
+
+    @Test
     public void testCodec() {
         SignedBlob blob = new SignedBlob();
         blob.setKey(randomBytes(32));

@@ -2,7 +2,9 @@ Network Layout
 ==============
 
 - The client asks for a password and encodes it as `UTF-8` for further use.
-- The client sends `GET /` to the server.
+- The client loads the RSA key pair from local storage if present.
+- The client sends `GET /challenge` and receives a sign challenge in the response body.
+- The client sends `GET /db` to the server with the header `Authorization: Signature <hex challenge> <hex signature>`.
 - The server responds with the encrypted blob (described below) or a 404
     + If 404 is received, the following steps are ignored and an empty decrypted blob is generated on the client instead.
     + The client uses the parameters from the encrypted blob together with the password bytes (see above) to derive the AES decryption key via scrypt.

@@ -27,19 +27,13 @@ public class EncryptedBlob {
         buf.writeInt(r);
         buf.writeInt(p);
         buf.writeInt(dkLen);
-        buf.writeInt(salt.length);
-        buf.writeBytes(salt);
+        Encoding.writeLengthPrefixedByteArray(buf, salt);
         assert iv.length == IV_LENGTH : iv.length;
         buf.writeBytes(iv); // length always 16
-        buf.writeInt(body.length);
-        buf.writeBytes(body);
-
-        System.out.println("Write E " + buf.toString(HexCharset.getInstance()));
+        Encoding.writeLengthPrefixedByteArray(buf, body);
     }
 
     public boolean read(ByteBuf buf) {
-        System.out.println("Read E " + buf.toString(HexCharset.getInstance()));
-
         if (buf.readableBytes() < 24) { return false; }
         buf.markReaderIndex();
         buf.order(ByteOrder.BIG_ENDIAN);
@@ -49,7 +43,7 @@ public class EncryptedBlob {
         p = buf.readInt();
         dkLen = buf.readInt();
         salt = Encoding.readLengthPrefixedByteArray(buf);
-        if (salt == null || buf.readableBytes() < IV_LENGTH + 1) {
+        if (salt == null || buf.readableBytes() < IV_LENGTH + 4) {
             buf.resetReaderIndex();
             return false;
         }

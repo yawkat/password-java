@@ -1,5 +1,6 @@
 package at.yawk.password.client;
 
+import at.yawk.password.HexCharset;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.EncryptedBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,6 +10,7 @@ import io.netty.handler.codec.MessageToMessageEncoder;
 import java.io.ByteArrayOutputStream;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.List;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
