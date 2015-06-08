@@ -24,7 +24,7 @@ public class EncrypterDecrypterTest {
         startBlob.setData(new PasswordBlob() {{
             getPasswords().add(new PasswordEntry() {{
                 setName("name");
-                setValue("password 123456789ß^1u9u0oshsbv");
+                setValue("password 1234567891u9u0oshsbv");
             }});
         }});
 
