@@ -32,6 +32,7 @@ class PasswordClientImpl implements PasswordClient {
     private Bootstrap bootstrap;
     private KeyPair rsaKeyPair;
     private byte[] password;
+    private String host;
 
     @Override
     public void setLocalStorageProvider(LocalStorageProvider localStorageProvider) {
@@ -60,6 +61,7 @@ class PasswordClientImpl implements PasswordClient {
                 ch.pipeline().addLast(new HttpClientCodec());
             }
         });
+        host = address.getHostString();
     }
 
     @Override
@@ -131,8 +133,9 @@ class PasswordClientImpl implements PasswordClient {
                 }
             }
         });
-        ExceptionForwardingFutureListener.write(
-                ch, new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/challenge"));
+        DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/challenge");
+        request.headers().add("Host", host);
+        ExceptionForwardingFutureListener.write(ch, request);
         ch.flush();
         return challengePromise.sync().get();
     }
@@ -190,6 +193,7 @@ class PasswordClientImpl implements PasswordClient {
                     }
                 });
         DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/db");
+        request.headers().add("Host", host);
         if (challenge != null && challengeSignature != null) {
             // add auth header
             request.headers().add("Authorization",
@@ -262,6 +266,7 @@ class PasswordClientImpl implements PasswordClient {
                     }
                 });
         DefaultHttpRequest request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/db");
+        request.headers().add("Host", host);
         request.headers().set("Transfer-Encoding", "Chunked");
         ch.write(request)
                 .addListener(ExceptionForwardingFutureListener.create(ch));
