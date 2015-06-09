@@ -11,7 +11,7 @@ import joptsimple.OptionSpec;
  * @author yawkat
  */
 public class Main {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         OptionParser parser = new OptionParser();
         OptionSpec<File> directory = parser.accepts("d")
                 .withRequiredArg()
@@ -26,8 +26,14 @@ public class Main {
         LocalStorageProvider storageProvider = new MultiFileLocalStorageProvider(
                 directory.value(set).toPath());
 
-        PasswordServer server = PasswordServer.create();
-        server.setStorageProvider(storageProvider);
-        server.bind(port.value(set));
+        try (PasswordServer server = PasswordServer.create()) {
+            server.setStorageProvider(storageProvider);
+            server.bind(port.value(set));
+            Object o = new Object();
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
+            synchronized (o) {
+                o.wait();
+            }
+        }
     }
 }
