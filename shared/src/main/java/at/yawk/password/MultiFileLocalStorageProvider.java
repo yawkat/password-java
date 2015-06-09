@@ -2,6 +2,7 @@ package at.yawk.password;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import javax.annotation.Nullable;
@@ -21,7 +22,7 @@ public class MultiFileLocalStorageProvider implements LocalStorageProvider {
         Path f = directory.resolve(Instant.now().toString());
         Files.write(f, data);
         Path link = directory.resolve("latest");
-        if (Files.exists(link)) {
+        if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
             Files.delete(link);
         }
         Files.createSymbolicLink(link, f);
