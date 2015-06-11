@@ -23,7 +23,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 class Encrypter extends MessageToMessageEncoder<DecryptedBlob> {
     // scrypt parameters
-    private static final int N_EXP = 18;
+    private static final int N_EXP = 16;
     private static final int R = 8;
     private static final int P = 1;
     private static final int DK_LEN = 32;
