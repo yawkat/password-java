@@ -22,10 +22,12 @@ import java.security.KeyPairGenerator;
 import java.util.Arrays;
 import javax.annotation.Nullable;
 import javax.xml.bind.DatatypeConverter;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @author yawkat
  */
+@Slf4j
 class PasswordClientImpl implements PasswordClient {
     private LocalStorageProvider localStorageProvider;
     private ObjectMapper objectMapper;
@@ -66,6 +68,7 @@ class PasswordClientImpl implements PasswordClient {
 
     @Override
     public synchronized ClientValue<PasswordBlob> load() throws Exception {
+        log.info("Loading password blob");
         if (objectMapper == null) {
             objectMapper = new ObjectMapper();
         }
@@ -75,7 +78,9 @@ class PasswordClientImpl implements PasswordClient {
         boolean fromLocalStorage = false;
         try {
             value = loadRemote();
+            log.info("Loaded password data from remote");
         } catch (Exception e) {
+            log.warn("Failed to load password blob from remote", e);
             exception = e;
         }
         if (value == null) {
@@ -88,7 +93,7 @@ class PasswordClientImpl implements PasswordClient {
                     throw exception;
                 } else {
                     // don't swallow
-                    exception.printStackTrace();
+                    log.info("Loaded password data from local instead");
                 }
             }
             fromLocalStorage = true;
@@ -154,7 +159,7 @@ class PasswordClientImpl implements PasswordClient {
             challengeSignature = Signer.sign(rsaKeyPair.getPrivate(), challenge);
         } else {
             challenge = challengeSignature = null;
-            System.out.println("Could not find key pair in local, let's hope the remote doesn't have a key pair yet");
+            log.info("Could not find key pair in local, let's hope the remote doesn't have a key pair yet");
         }
 
         Channel ch = bootstrap.connect().sync().channel();
@@ -231,6 +236,7 @@ class PasswordClientImpl implements PasswordClient {
 
     @Override
     public void save(PasswordBlob data) throws Exception {
+        log.info("Saving password blob");
         if (objectMapper == null) {
             objectMapper = new ObjectMapper();
         }
@@ -276,6 +282,7 @@ class PasswordClientImpl implements PasswordClient {
                 .addListener(ExceptionForwardingFutureListener.create(ch));
         ch.flush();
         completionPromise.sync();
+        log.info("Password blob saved");
     }
 
     @Override

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lambdaworks.crypto.SCrypt;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageDecoder;
+import java.security.GeneralSecurityException;
 import java.util.Arrays;
 import java.util.List;
 import javax.crypto.Cipher;
@@ -14,11 +15,13 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.xml.bind.DatatypeConverter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @author yawkat
  */
 @RequiredArgsConstructor
+@Slf4j
 class Decrypter extends MessageToMessageDecoder<EncryptedBlob> {
     static final int HMAC_LENGTH = 64;
 
@@ -32,8 +35,21 @@ class Decrypter extends MessageToMessageDecoder<EncryptedBlob> {
         out.add(decrypted);
     }
 
+    static byte[] scrypt(byte[] password, byte[] salt, int n, int r, int p, int dkLen) throws GeneralSecurityException {
+        if (log.isDebugEnabled()) {
+            log.debug("Hashing password with parameters n={} r={} p={} dkLen={}", n, r, p, dkLen);
+            long start = System.currentTimeMillis();
+            byte[] key = SCrypt.scrypt(password, salt, n, r, p, dkLen);
+            long end = System.currentTimeMillis();
+            log.debug("Hashing took {} ms", end - start);
+            return key;
+        } else {
+            return SCrypt.scrypt(password, salt, n, r, p, dkLen);
+        }
+    }
+
     static DecryptedBlob decrypt(ObjectMapper objectMapper, byte[] password, EncryptedBlob msg) throws Exception {
-        byte[] key = SCrypt.scrypt(
+        byte[] key = scrypt(
                 password,
                 msg.getSalt(),
                 1 << msg.getExpN(),

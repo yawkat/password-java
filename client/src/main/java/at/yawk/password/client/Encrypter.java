@@ -60,7 +60,7 @@ class Encrypter extends MessageToMessageEncoder<DecryptedBlob> {
     public static EncryptedBlob encrypt(ObjectMapper objectMapper, byte[] password, DecryptedBlob msg)
             throws Exception {
         byte[] salt = generateSalt();
-        byte[] key = SCrypt.scrypt(
+        byte[] key = Decrypter.scrypt(
                 password,
                 salt,
                 1 << N_EXP, R, P,
