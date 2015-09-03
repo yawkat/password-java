@@ -44,7 +44,7 @@ public class PlatformDependent {
     static void symlinkOrCopy(File source, File target) throws IOException {
         if (hasJdk8) {
             try {
-                Files.createSymbolicLink(source.toPath(), target.toPath());
+                Files.createSymbolicLink(target.toPath(), source.toPath());
                 return;
             } catch (NoClassDefFoundError ignored) {
                 hasJdk8 = false;
@@ -67,5 +67,14 @@ public class PlatformDependent {
         if (!tmp.renameTo(target)) {
             throw new IOException("Failed to rename temp file to target");
         }
+    }
+
+    public static String printHexBinary(byte[] bytes) {
+        StringBuilder builder = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            builder.append("0123456789abcdef".charAt((b >>> 4) & 0xf));
+            builder.append("0123456789abcdef".charAt(b & 0xf));
+        }
+        return builder.toString();
     }
 }

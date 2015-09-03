@@ -1,5 +1,6 @@
 package at.yawk.password.client;
 
+import at.yawk.password.PlatformDependent;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.EncryptedBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,7 +14,6 @@ import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import javax.xml.bind.DatatypeConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -75,10 +75,9 @@ class Decrypter extends MessageToMessageDecoder<EncryptedBlob> {
             if (dec[i] != expectedMac[i]) {
                 throw new Exception(
                         "Invalid HMAC: expected " +
-                        DatatypeConverter.printHexBinary(expectedMac).toLowerCase() +
+                        PlatformDependent.printHexBinary(expectedMac) +
                         " but was " +
-                        DatatypeConverter.printHexBinary(Arrays.copyOf(dec, HMAC_LENGTH))
-                                .toLowerCase()
+                        PlatformDependent.printHexBinary(Arrays.copyOf(dec, HMAC_LENGTH))
                 );
             }
         }
