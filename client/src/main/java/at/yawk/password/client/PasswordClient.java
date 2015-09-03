@@ -1,33 +1,48 @@
 package at.yawk.password.client;
 
 import at.yawk.password.LocalStorageProvider;
+import at.yawk.password.model.DecryptedBlob;
+import at.yawk.password.model.EncryptedBlob;
 import at.yawk.password.model.PasswordBlob;
+import at.yawk.password.model.ScryptParameters;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.net.InetSocketAddress;
-import lombok.experimental.UtilityClass;
 
 /**
  * @author yawkat
  */
-public interface PasswordClient extends AutoCloseable {
-    void setRemote(String host, int port);
+public class PasswordClient {
+    /**
+     * Parameters used to derive the shared secret. This is fairly low-security and also has a low key length; the
+     * shared secret is easy to get through MiM so we don't want to leak too much data through it (assuming strong
+     * password).
+     *
+     * The salt is random - it could probably be specialized per-server but we don't do that currently.
+     */
+    private static final ScryptParameters SHARED_SECRET_PARAMETERS = new ScryptParameters(
+            14, 8, 1, 8, "CuRdXw06VaLQhV9K".getBytes());
 
-    void setRemote(InetSocketAddress address);
+    private final DatabaseClient databaseClient;
+    private final ObjectMapper objectMapper;
+    private final byte[] password;
 
-    void setLocalStorageProvider(LocalStorageProvider localStorageProvider);
+    public PasswordClient(String url, LocalStorageProvider localStorageProvider, byte[] password) {
+        this.password = password;
+        databaseClient = new DatabaseClient(localStorageProvider, url, SHARED_SECRET_PARAMETERS.runScrypt(password));
+        objectMapper = new ObjectMapper();
+    }
 
-    void setObjectMapper(ObjectMapper objectMapper);
+    public ClientValue<PasswordBlob> load() throws Exception {
+        return databaseClient.load().map(bytes -> {
+            EncryptedBlob encryptedBlob = new EncryptedBlob();
+            encryptedBlob.read(bytes);
+            return AesCodec.decrypt(objectMapper, password, encryptedBlob).getData();
+        });
+    }
 
-    void setPassword(byte[] password);
-
-    ClientValue<PasswordBlob> load() throws Exception;
-
-    void save(PasswordBlob data) throws Exception;
-
-    @UtilityClass
-    class Factory {
-        public static PasswordClient create() {
-            return new PasswordClientImpl();
-        }
+    public void save(PasswordBlob blob) throws Exception {
+        DecryptedBlob decrypted = new DecryptedBlob();
+        decrypted.setData(blob);
+        EncryptedBlob encrypted = AesCodec.encrypt(objectMapper, password, decrypted);
+        databaseClient.save(encrypted.write());
     }
 }

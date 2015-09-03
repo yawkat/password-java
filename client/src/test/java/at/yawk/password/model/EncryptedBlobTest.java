@@ -1,8 +1,6 @@
 package at.yawk.password.model;
 
-import at.yawk.password.ClientServerTest;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
+import at.yawk.password.HashUtil;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -13,21 +11,15 @@ public class EncryptedBlobTest {
     @Test
     public void testCodec() {
         EncryptedBlob blob = new EncryptedBlob();
-        blob.setExpN(20);
-        blob.setR(8);
-        blob.setP(1);
-        blob.setDkLen(32);
-        blob.setSalt(ClientServerTest.randomBytes(32));
-        blob.setIv(ClientServerTest.randomBytes(16));
-        blob.setBody(ClientServerTest.randomBytes(1000));
+        blob.setParameters(new ScryptParameters(20, 8, 1, 32, HashUtil.generateRandomBytes(32)));
+        blob.setIv(HashUtil.generateRandomBytes(16));
+        blob.setBody(HashUtil.generateRandomBytes(1000));
 
-        ByteBuf buf = Unpooled.buffer();
-        blob.write(buf);
+        byte[] bytes = blob.write();
 
         EncryptedBlob copy = new EncryptedBlob();
-        copy.read(buf);
+        copy.read(bytes);
 
-        Assert.assertFalse(buf.isReadable());
         Assert.assertEquals(blob, copy);
     }
 }

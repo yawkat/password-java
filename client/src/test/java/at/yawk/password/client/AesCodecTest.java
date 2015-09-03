@@ -1,6 +1,6 @@
 package at.yawk.password.client;
 
-import at.yawk.password.ClientServerTest;
+import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.EncryptedBlob;
 import at.yawk.password.model.PasswordBlob;
@@ -12,11 +12,11 @@ import org.testng.annotations.Test;
 /**
  * @author yawkat
  */
-public class EncrypterDecrypterTest {
+public class AesCodecTest {
     @Test
     public void testEncryptDecrypt() throws Exception {
         ObjectMapper om = new ObjectMapper();
-        byte[] password = ClientServerTest.randomBytes(100);
+        byte[] password = HashUtil.generateRandomBytes(100);
 
         DecryptedBlob startBlob = new DecryptedBlob();
         startBlob.setData(new PasswordBlob() {{
@@ -26,8 +26,8 @@ public class EncrypterDecrypterTest {
             }});
         }});
 
-        EncryptedBlob encrypted = Encrypter.encrypt(om, password, startBlob);
-        DecryptedBlob decrypted = Decrypter.decrypt(om, password, encrypted);
+        EncryptedBlob encrypted = AesCodec.encrypt(om, password, startBlob);
+        DecryptedBlob decrypted = AesCodec.decrypt(om, password, encrypted);
 
         Assert.assertEquals(startBlob, decrypted);
     }

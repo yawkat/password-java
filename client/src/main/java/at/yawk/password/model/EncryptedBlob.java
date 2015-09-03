@@ -1,8 +1,7 @@
 package at.yawk.password.model;
 
 import at.yawk.password.Encoding;
-import at.yawk.password.HexCharset;
-import io.netty.buffer.ByteBuf;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import lombok.Data;
 
@@ -13,47 +12,40 @@ import lombok.Data;
 public class EncryptedBlob {
     private static final int IV_LENGTH = 16;
 
-    private int expN;
-    private int r;
-    private int p;
-    private int dkLen;
-    private byte[] salt;
+    private ScryptParameters parameters;
     private byte[] iv;
     private byte[] body;
 
-    public void write(ByteBuf buf) {
+    public byte[] write() {
+        int expectedBytes = 16 + 4 + parameters.getSalt().length +
+                            IV_LENGTH +
+                            4 + body.length;
+        ByteBuffer buf = ByteBuffer.allocate(expectedBytes);
+
         buf.order(ByteOrder.BIG_ENDIAN);
-        buf.writeInt(expN);
-        buf.writeInt(r);
-        buf.writeInt(p);
-        buf.writeInt(dkLen);
-        Encoding.writeLengthPrefixedByteArray(buf, salt);
+        buf.putInt(parameters.getExpN());
+        buf.putInt(parameters.getR());
+        buf.putInt(parameters.getP());
+        buf.putInt(parameters.getDkLen());
+        Encoding.writeLengthPrefixedByteArray(buf, parameters.getSalt());
         assert iv.length == IV_LENGTH : iv.length;
-        buf.writeBytes(iv); // length always 16
+        buf.put(iv); // length always 16
         Encoding.writeLengthPrefixedByteArray(buf, body);
+        return buf.array();
     }
 
-    public boolean read(ByteBuf buf) {
-        if (buf.readableBytes() < 24) { return false; }
-        buf.markReaderIndex();
-        buf.order(ByteOrder.BIG_ENDIAN);
+    public void read(byte[] bytes) {
+        ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
 
-        expN = buf.readInt();
-        r = buf.readInt();
-        p = buf.readInt();
-        dkLen = buf.readInt();
-        salt = Encoding.readLengthPrefixedByteArray(buf);
-        if (salt == null || buf.readableBytes() < IV_LENGTH + 4) {
-            buf.resetReaderIndex();
-            return false;
-        }
+        int expN = buf.getInt();
+        int r = buf.getInt();
+        int p = buf.getInt();
+        int dkLen = buf.getInt();
+        byte[] salt = Encoding.readLengthPrefixedByteArray(buf);
+        parameters = new ScryptParameters(expN, r, p, dkLen, salt);
+
         iv = new byte[IV_LENGTH];
-        buf.readBytes(iv);
+        buf.get(iv);
         body = Encoding.readLengthPrefixedByteArray(buf);
-        if (body == null) {
-            buf.resetReaderIndex();
-            return false;
-        }
-        return true;
     }
 }

@@ -14,11 +14,6 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
-            <version>5.0.0.Alpha2</version>
-        </dependency>
-        <dependency>
             <groupId>com.lambdaworks</groupId>
             <artifactId>scrypt</artifactId>
             <version>1.4.0</version>
