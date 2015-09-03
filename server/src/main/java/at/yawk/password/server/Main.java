@@ -23,10 +23,9 @@ public class Main {
                 .defaultsTo(8080);
         OptionSet set = parser.parse(args);
 
-        LocalStorageProvider storageProvider = new MultiFileLocalStorageProvider(
-                directory.value(set).toPath());
+        LocalStorageProvider storageProvider = new MultiFileLocalStorageProvider(directory.value(set));
 
-        try (PasswordServer server = PasswordServer.create()) {
+        try (PasswordServer server = PasswordServer.Factory.create()) {
             server.setStorageProvider(storageProvider);
             server.bind(port.value(set));
             Object o = new Object();

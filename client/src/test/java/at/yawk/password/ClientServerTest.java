@@ -27,7 +27,7 @@ public class ClientServerTest {
 
     @BeforeTest
     public void open() {
-        server = PasswordServer.create();
+        server = PasswordServer.Factory.create();
         server.setStorageProvider(new MemoryStorageProvider());
         server.bind(PORT);
     }
@@ -73,7 +73,7 @@ public class ClientServerTest {
     }
 
     private static PasswordClient createClient(byte[] password, LocalStorageProvider clientStorage) {
-        PasswordClient client = PasswordClient.create();
+        PasswordClient client = PasswordClient.Factory.create();
         client.setRemote("localhost", PORT);
         client.setPassword(password);
         client.setLocalStorageProvider(clientStorage);

@@ -48,6 +48,11 @@ class PasswordServerImpl implements PasswordServer {
     }
 
     @Override
+    public void bind(int port) {
+        bind(new InetSocketAddress("0.0.0.0", port));
+    }
+
+    @Override
     public void bind(InetSocketAddress address) {
         bootstrap.bind(address);
     }

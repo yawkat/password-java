@@ -4,18 +4,13 @@ import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.model.PasswordBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.InetSocketAddress;
+import lombok.experimental.UtilityClass;
 
 /**
  * @author yawkat
  */
 public interface PasswordClient extends AutoCloseable {
-    static PasswordClient create() {
-        return new PasswordClientImpl();
-    }
-
-    default void setRemote(String host, int port) {
-        setRemote(new InetSocketAddress(host, port));
-    }
+    void setRemote(String host, int port);
 
     void setRemote(InetSocketAddress address);
 
@@ -28,4 +23,11 @@ public interface PasswordClient extends AutoCloseable {
     ClientValue<PasswordBlob> load() throws Exception;
 
     void save(PasswordBlob data) throws Exception;
+
+    @UtilityClass
+    class Factory {
+        public static PasswordClient create() {
+            return new PasswordClientImpl();
+        }
+    }
 }

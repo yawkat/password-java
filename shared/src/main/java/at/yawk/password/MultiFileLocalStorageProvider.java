@@ -1,14 +1,6 @@
 package at.yawk.password;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.io.*;
 import javax.annotation.Nullable;
 import lombok.RequiredArgsConstructor;
 
@@ -19,32 +11,32 @@ import lombok.RequiredArgsConstructor;
  */
 @RequiredArgsConstructor
 public class MultiFileLocalStorageProvider implements LocalStorageProvider {
-    private final Path directory;
+    private final File directory;
 
     @Override
     public void save(byte[] data) throws IOException {
-        Path f = directory.resolve(Instant.now().toString());
+        File f = new File(directory, PlatformDependent.nowTimestamp());
 
-        try (OutputStream out = Files.newOutputStream(f)) {
-            Files.setPosixFilePermissions(f, new HashSet<>(Arrays.asList(
-                    PosixFilePermission.OWNER_READ,
-                    PosixFilePermission.OWNER_WRITE
-            )));
+        try (OutputStream out = new FileOutputStream(f)) {
+            PlatformDependent.setOwnerOnlyPermissions(f);
             out.write(data);
         }
 
-        Path link = directory.resolve("latest");
-        if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
-            Files.delete(link);
-        }
-        Files.createSymbolicLink(link, f);
+        File link = new File(directory, "latest");
+        //noinspection ResultOfMethodCallIgnored
+        link.delete();
+
+        PlatformDependent.symlinkOrCopy(f, link);
     }
 
     @Nullable
     @Override
     public byte[] load() throws IOException {
-        Path latest = directory.resolve("latest");
-        if (!Files.exists(latest)) { return null; }
-        return Files.readAllBytes(latest);
+        try {
+            return FileLocalStorageProvider.getBytes(new File(directory, "latest"));
+        } catch (FileNotFoundException notFound) {
+            // only safe way to confirm existence
+            return null;
+        }
     }
 }

@@ -52,6 +52,11 @@ class PasswordClientImpl implements PasswordClient {
     }
 
     @Override
+    public void setRemote(String host, int port) {
+        setRemote(new InetSocketAddress(host, port));
+    }
+
+    @Override
     public void setRemote(InetSocketAddress address) {
         bootstrap = new Bootstrap();
         bootstrap.channel(NioSocketChannel.class);
