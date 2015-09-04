@@ -23,7 +23,9 @@ class DatabaseClient {
 
     public ClientValue<byte[]> load() throws IOException {
         try {
-            return new ClientValue<>(getRemote(), false);
+            byte[] remote = getRemote();
+            storageProvider.save(remote);
+            return new ClientValue<>(remote, false);
         } catch (IOException e) {
             log.info("Could not get db from remote, trying local", e);
 
