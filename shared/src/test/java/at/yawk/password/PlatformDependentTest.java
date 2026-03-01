@@ -1,7 +1,7 @@
 package at.yawk.password;
 
 import java.util.concurrent.ThreadLocalRandom;
-import javax.xml.bind.DatatypeConverter;
+import java.util.HexFormat;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
@@ -17,7 +17,7 @@ public class PlatformDependentTest {
             ThreadLocalRandom.current().nextBytes(bytes);
 
             assertEquals(PlatformDependent.printHexBinary(bytes),
-                         DatatypeConverter.printHexBinary(bytes).toLowerCase());
+                         HexFormat.of().formatHex(bytes));
         }
     }
 }

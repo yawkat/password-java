@@ -5,7 +5,7 @@ import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.EncryptedBlob;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.ScryptParameters;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * @author yawkat

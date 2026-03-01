@@ -6,50 +6,29 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Set;
-import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 
 /**
  * @author yawkat
  */
-@IgnoreJRERequirement
 public class PlatformDependent {
-    private static boolean hasJdk8 = true;
-
     /**
-     * Get the current ISO-8601 timestamp, either with joda-time or jdk8.
+     * Get the current ISO-8601 timestamp.
      */
     static String nowTimestamp() {
-        if (hasJdk8) {
-            try {
-                return Instant.now().toString();
-            } catch (NoClassDefFoundError ignored) {
-                hasJdk8 = false;
-            }
-        }
-        return org.joda.time.Instant.now().toString();
+        return Instant.now().toString();
     }
 
     static void setOwnerOnlyPermissions(File file) throws IOException {
-        if (hasJdk8) {
-            try {
-                Set<PosixFilePermission> perms = EnumSet.of(
-                        PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-                Files.setPosixFilePermissions(file.toPath(), perms);
-            } catch (NoClassDefFoundError ignored) {
-                hasJdk8 = false;
-            }
-        }
+        Set<PosixFilePermission> perms = EnumSet.of(
+                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+        Files.setPosixFilePermissions(file.toPath(), perms);
     }
 
     static void symlinkOrCopy(File source, File target) throws IOException {
-        if (hasJdk8) {
-            try {
-                Files.createSymbolicLink(target.toPath(), source.toPath());
-                return;
-            } catch (NoClassDefFoundError ignored) {
-                hasJdk8 = false;
-            }
-        }
+        try {
+            Files.createSymbolicLink(target.toPath(), source.toPath());
+            return;
+        } catch (UnsupportedOperationException ignored) {}
 
         try {
             Process process = new ProcessBuilder("ln", "-sf", "--", source.toString(), target.toString()).start();

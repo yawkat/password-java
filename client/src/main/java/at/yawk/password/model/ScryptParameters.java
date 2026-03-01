@@ -4,7 +4,7 @@ import com.lambdaworks.crypto.SCrypt;
 import java.security.GeneralSecurityException;
 import lombok.SneakyThrows;
 import lombok.Value;
-import lombok.experimental.Wither;
+import lombok.With;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -12,7 +12,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Value
 @Slf4j
-@Wither
+@With
 public class ScryptParameters {
     private final int expN;
     private final int r;

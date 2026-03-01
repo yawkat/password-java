@@ -1,6 +1,6 @@
 package at.yawk.password.client;
 
-import javax.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 import lombok.Value;
 
 /**

@@ -1,7 +1,7 @@
 package at.yawk.password;
 
 import java.io.IOException;
-import javax.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * @author yawkat

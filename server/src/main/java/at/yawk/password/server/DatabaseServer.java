@@ -10,7 +10,7 @@ import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import javax.xml.bind.DatatypeConverter;
+import java.util.HexFormat;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
 import joptsimple.OptionSpec;
@@ -61,7 +61,7 @@ public class DatabaseServer {
 
     private boolean takeToken(Request request) {
         String header = request.headers("X-Auth-Token");
-        return header != null && tokens.remove(new ByteArrayWrapper(DatatypeConverter.parseHexBinary(header)));
+        return header != null && tokens.remove(new ByteArrayWrapper(HexFormat.of().parseHex(header)));
     }
 
     public void start() {
