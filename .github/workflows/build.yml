@@ -30,6 +30,13 @@ jobs:
           name: server-shaded
           path: server/target/server-1.0-SNAPSHOT-shaded.jar
 
+      - name: Upload GUI jar
+        uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/master'
+        with:
+          name: gui-shaded
+          path: gui/target/gui-1.0-SNAPSHOT-shaded.jar
+
   release:
     needs: build
     runs-on: ubuntu-latest

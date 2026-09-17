@@ -13,6 +13,7 @@
         <module>server</module>
         <module>shared</module>
         <module>client</module>
+        <module>gui</module>
     </modules>
 
     <properties>
