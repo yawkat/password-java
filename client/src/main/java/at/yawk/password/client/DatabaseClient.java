@@ -85,6 +85,14 @@ class DatabaseClient {
                 out.write(body);
             }
         }
+        int status = ((HttpURLConnection) connection).getResponseCode();
+        // error codes are thrown by getInputStream (404 as FileNotFoundException), but other non-2xx responses such
+        // as an unfollowed http -> https redirect would otherwise be returned as if they were data
+        if (status < 400 && status / 100 != 2) {
+            throw new IOException("Unexpected HTTP status " + status + " for " + method + " " + url +
+                                  (connection.getHeaderField("Location") == null ?
+                                          "" : " (redirect to " + connection.getHeaderField("Location") + ")"));
+        }
         try (InputStream in = connection.getInputStream();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
