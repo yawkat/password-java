@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.lombok) apply false
     alias(libs.plugins.shadow) apply false
+    alias(libs.plugins.micronaut.application) apply false
 }
 
 subprojects {

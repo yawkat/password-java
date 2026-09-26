@@ -40,19 +40,25 @@ stdenv.mkDerivation (finalAttrs: {
 
   passthru = { inherit gradle; };
 
-  gradleBuildTask = ":server:shadowJar";
+  # the application distribution (lib/*.jar and start scripts); Micronaut doesn't support fat jars well
+  gradleBuildTask = ":server:installDist";
 
   doCheck = true;
   gradleCheckTask = "check";
 
   installPhase = ''
     runHook preInstall
-    install -Dm644 server/build/libs/server-all.jar $out/share/password/server.jar
+    mkdir -p $out/share/password
+    cp -r server/build/install/server/lib $out/share/password/lib
+    # the runtime classpath in Gradle's order, taken from the distribution's start script
+    sed -n 's|^CLASSPATH=||p' server/build/install/server/bin/server \
+      | sed "s|\$APP_HOME/lib/|$out/share/password/lib/|g" > $out/share/password/classpath
+    test -s $out/share/password/classpath
     runHook postInstall
   '';
 
   meta = {
-    description = "Server jar of the password-java password manager";
+    description = "Server jars of the password-java password manager";
     homepage = "https://github.com/yawkat/password-java";
     platforms = lib.platforms.linux;
     sourceProvenance = with lib.sourceTypes; [

@@ -33,14 +33,15 @@ testers.runNixOSTest {
     def status(m, args):
         return m.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {args}").strip()
 
-    # The current Spark server answers 404 where it sets 403 (it returns a null body), so accept both.
     def assert_denied(m, args):
         code = status(m, args)
-        assert code in ("403", "404"), f"expected request to be denied, got status {code}"
+        assert code == "403", f"expected request to be denied with 403, got status {code}"
 
     def check_server(m, data_dir):
         m.wait_for_unit("password-server.service")
         m.wait_for_open_port(8081)
+        # logs go through logback to the journal
+        m.wait_until_succeeds("journalctl -u password-server.service | grep -q 'Startup completed'")
 
         # no shared secret yet
         assert status(m, f"{url}/challenge") == "404"

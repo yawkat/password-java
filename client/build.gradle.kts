@@ -9,8 +9,7 @@ dependencies {
     testFixturesCompileOnly(libs.jetbrains.annotations)
 
     // Needed for testing
-    testImplementation(project(":server"))
-    testImplementation(libs.spark.core)
+    testImplementation(testFixtures(project(":server")))
 }
 
 // main and testFixtures stay consumable by Android (D8). The tests depend on :server, which targets 25, so they are
