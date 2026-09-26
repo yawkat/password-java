@@ -15,9 +15,5 @@ gradlePlugin {
             id = "password.android-target"
             implementationClass = "at.yawk.password.gradle.AndroidTargetPlugin"
         }
-        register("apiLevelCheck") {
-            id = "password.android-api-check"
-            implementationClass = "at.yawk.password.gradle.ApiLevelCheckPlugin"
-        }
     }
 }

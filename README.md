@@ -133,8 +133,16 @@ The Android Gradle Plugin downloads missing SDK packages if their licenses have 
 ```
 
 The repository has no release signing configuration: sign the release APK yourself (e.g. with `apksigner`), or
-install the debug build. `./gradlew build` builds both and also checks that they only use Android APIs that exist on
-API 29 (`checkDebugApiLevels`, `checkReleaseApiLevels`).
+install the debug build. `./gradlew build` builds both and runs Android Lint, which fails on uses of APIs newer than
+API 29 in our code.
+
+Libraries can still call JDK methods that older Android versions lack, which only fails at runtime. The instrumented
+tests in `android/src/androidTest` run the risky parts (Jackson, BouncyCastle's scrypt, the local storage) on a
+device; CI runs them on an API 29 emulator. To run them on a connected device or emulator:
+
+```sh
+./gradlew :android:connectedDebugAndroidTest
+```
 
 The app keeps the server URL in its settings (default `https://pw.yawk.at`; enter your own on the unlock screen) and
 the local copy of the database in its private storage. It locks after five minutes in the background, and removes a

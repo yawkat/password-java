@@ -13,6 +13,8 @@ kotlinx-coroutines = "1.11.0"
 # Android Gradle Plugin. It is only put on the build classpath when the Android build is enabled, see build.gradle.kts.
 agp = "9.4.1"
 androidx-activity = "1.13.0"
+androidx-test = "1.7.0"
+androidx-test-junit = "1.3.0"
 android-compileSdk = "37"
 # newer than AGP's default (36.0.0)
 android-buildTools = "37.0.0"
@@ -42,6 +44,8 @@ kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test" }
+androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
 
 [plugins]
 lombok = { id = "io.freefair.lombok", version = "9.7.0" }

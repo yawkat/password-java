@@ -5,8 +5,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.application")
     alias(libs.plugins.kotlin.compose)
-    // fails `check` if the APKs call platform methods that are missing at minSdk (build-logic/.../ApiLevelCheck.kt)
-    id("password.android-api-check")
 }
 
 android {
@@ -21,6 +19,8 @@ android {
         targetSdk = libs.versions.android.compileSdk.get().toInt()
         versionCode = 2
         versionName = "2.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -36,6 +36,19 @@ android {
             // There is no release signing configuration in this repository. Sign the release APK yourself
             // (apksigner), or install the debug build.
         }
+    }
+
+    lint {
+        // Also check our code in :app's Android target. NewApi (APIs above minSdk) is an error by default, and errors
+        // fail `lint`, which `check` (and so `build`) runs.
+        checkDependencies = true
+        error += "NewApi"
+        abortOnError = true
+    }
+
+    // The instrumented tests decrypt the database fixture of :client's tests
+    sourceSets.named("androidTest") {
+        resources.directories += "../client/src/test/resources"
     }
 
     packaging {
@@ -59,24 +72,11 @@ kotlin {
     }
 }
 
-apiLevelCheck {
-    // References above minSdk that can't be reached (or work anyway) on older Android versions. Each needs a reason.
-    allowed.putAll(
-        mapOf(
-            // Jackson loads its java.beans support (@ConstructorProperties, @Transient) reflectively and skips it
-            // when the classes are missing, as they are on Android
-            "java/beans/*" to "Jackson's optional java.beans support, only used when java.beans exists",
-            // kotlinx.coroutines and kotlinx.serialization check whether ClassValue works and fall back otherwise
-            "java/lang/ClassValue.<init>()V" to "only used when available",
-            // the debug agent of kotlinx.coroutines, only loaded as a JVM agent
-            "java/lang/instrument/*" to "JVM agent code, never loaded on Android",
-            // BouncyCastle's LDAP certificate store; only SCrypt is used
-            "javax/naming/*" to "BouncyCastle LDAP support, never used",
-        ),
-    )
-}
-
 dependencies {
     implementation(project(":app"))
     implementation(libs.androidx.activity.compose)
+
+    androidTestImplementation(project(":client"))
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }

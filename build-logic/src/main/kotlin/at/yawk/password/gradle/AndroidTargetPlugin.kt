@@ -23,6 +23,8 @@ class AndroidTargetPlugin : Plugin<Project> {
         fun library(name: String) = libs.findLibrary(name).get()
 
         project.pluginManager.apply("com.android.kotlin.multiplatform.library")
+        // lint for the Android target (the KMP library plugin has none of its own), run by `check`
+        project.pluginManager.apply("com.android.lint")
 
         val kotlin = project.extensions.getByName("kotlin") as ExtensionAware
         kotlin.extensions.configure<KotlinMultiplatformAndroidLibraryTarget>("android") {
