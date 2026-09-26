@@ -81,7 +81,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -300,8 +299,10 @@ fun MainScreen(
 
     // back closes the editor (asking about unsaved changes), then the entry page, then clears the search. Dialogs
     // handle back themselves.
-    PlatformBackHandler(enabled = (editing && !busy) || ui.detailOpen || ui.query.text.isNotEmpty()) {
+    // handle back while saving as well, so it doesn't leave the app halfway (the save goes on anyway)
+    PlatformBackHandler(enabled = editing || busy || ui.detailOpen || ui.query.text.isNotEmpty()) {
         when {
+            latest.busy -> viewModel.showStatus("Please wait until saving has finished")
             ui.editing -> cancelEditing()
             ui.detailOpen -> ui.closeDetail()
             else -> ui.query = TextFieldValue("")
@@ -310,9 +311,10 @@ fun MainScreen(
 
     if (touchInput) {
         val detail = ui.detail(state.entries)
-        if (ui.detailOpen && detail == null) {
-            // the entry is gone (deleted, or new objects after a reload)
-            SideEffect { ui.closeDetail() }
+        // Not while editing or busy: a save or reload replaces the entry objects, and the new selection is only set
+        // once that has finished.
+        if (ui.detailOpen && detail == null && !editing && !busy) {
+            SideEffect { ui.reopenOrCloseDetail(state.entries) }
         }
         Column(Modifier.fillMaxSize()) {
             when {
@@ -808,8 +810,9 @@ private fun CompactEditor(ui: MainScreenState, busy: Boolean, nameFocus: FocusRe
             textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
             enabled = !busy,
             minLines = 6,
-            // no suggestions or learning from what is typed here
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password),
+            // A normal (multi-line) keyboard: the password type makes some keyboards drop the newline key. Compose
+            // has no way to set IME_FLAG_NO_PERSONALIZED_LEARNING, so without suggestions is the best we can do.
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedButton(

@@ -82,6 +82,15 @@ class MainScreenStateTest {
         ui.query = androidx.compose.ui.text.input.TextFieldValue("")
         assertNull(ui.detail(listOf(entry("a"), entry("b"))))
 
+        // new objects of the same entries: the page shows the one with the same name
+        val reloaded = listOf(entry("a"), entry("b"))
+        ui.reopenOrCloseDetail(reloaded)
+        assertSame(reloaded[1], ui.detail(reloaded))
+        // gone: back to the list
+        ui.reopenOrCloseDetail(listOf(entry("a")))
+        assertFalse(ui.detailOpen)
+
+        ui.openDetail(entries[1])
         ui.revealed = true
         ui.closeDetail()
         assertNull(ui.detail(entries))

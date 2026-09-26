@@ -133,6 +133,16 @@ class MainScreenState {
         }
     }
 
+    /**
+     * The entry of the open page is gone from [entries]: show the entry of the same name instead (e.g. after a
+     * reload, which replaces all entry objects), or go back to the list.
+     */
+    fun reopenOrCloseDetail(entries: List<PasswordEntry>) {
+        val name = selected?.name
+        val replacement = visible(entries).firstOrNull { it.name == name }
+        if (replacement != null) selected = replacement else closeDetail()
+    }
+
     fun closeDetail() {
         detailOpen = false
         revealed = false
