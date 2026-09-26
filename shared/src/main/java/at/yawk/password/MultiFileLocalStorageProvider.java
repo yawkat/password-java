@@ -17,16 +17,13 @@ public class MultiFileLocalStorageProvider implements LocalStorageProvider {
     public void save(byte[] data) throws IOException {
         File f = new File(directory, PlatformDependent.nowTimestamp());
 
-        try (OutputStream out = new FileOutputStream(f)) {
-            PlatformDependent.setOwnerOnlyPermissions(f);
-            out.write(data);
-        }
+        PlatformDependent.createOwnerOnly(f, data);
 
         File link = new File(directory, "latest");
         //noinspection ResultOfMethodCallIgnored
         link.delete();
 
-        PlatformDependent.symlinkOrCopy(f, link);
+        PlatformDependent.symlinkOrCopy(f, link, data);
     }
 
     @Nullable
