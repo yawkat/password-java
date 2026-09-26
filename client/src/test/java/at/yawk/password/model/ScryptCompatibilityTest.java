@@ -80,19 +80,18 @@ public class ScryptCompatibilityTest {
 
     @DataProvider
     public Object[][] unsupportedParameters() {
-        byte[] salt = new byte[32];
         return new Object[][]{
-                {new ScryptParameters(0, 8, 1, 32, salt)},
-                {new ScryptParameters(33, 8, 1, 32, salt)},
-                {new ScryptParameters(24, 8, 1, 32, salt)}, // 2 GiB
-                {new ScryptParameters(16, 0, 1, 32, salt)},
-                {new ScryptParameters(16, 8, 0, 32, salt)},
-                {new ScryptParameters(16, 8, 1, 0, salt)},
+                {0, 8, 1, 32},
+                {33, 8, 1, 32},
+                {24, 8, 1, 32}, // 2 GiB
+                {16, 0, 1, 32},
+                {16, 8, 0, 32},
+                {16, 8, 1, 0},
         };
     }
 
     @Test(dataProvider = "unsupportedParameters", expectedExceptions = IllegalArgumentException.class)
-    public void rejectsUnsupportedParameters(ScryptParameters parameters) {
-        parameters.runScrypt("password".getBytes(StandardCharsets.UTF_8));
+    public void rejectsUnsupportedParameters(int expN, int r, int p, int dkLen) {
+        new ScryptParameters(expN, r, p, dkLen, new byte[32]);
     }
 }

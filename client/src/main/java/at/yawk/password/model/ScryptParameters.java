@@ -24,6 +24,18 @@ public class ScryptParameters {
     private final int dkLen;
     private final byte[] salt;
 
+    public ScryptParameters(int expN, int r, int p, int dkLen, byte[] salt) {
+        if (expN < 1 || expN > 30 || r < 1 || p < 1 || dkLen < 1 || 128L * r * (1L << expN) > MAX_MEMORY) {
+            throw new IllegalArgumentException(
+                    "Unsupported scrypt parameters: expN=" + expN + ", r=" + r + ", p=" + p + ", dkLen=" + dkLen);
+        }
+        this.expN = expN;
+        this.r = r;
+        this.p = p;
+        this.dkLen = dkLen;
+        this.salt = salt;
+    }
+
     public byte[] runScrypt(byte[] password) {
         if (log.isDebugEnabled()) {
             log.debug("Hashing password with parameters {}", this);
@@ -38,9 +50,6 @@ public class ScryptParameters {
     }
 
     private byte[] doRunScrypt(byte[] password) {
-        if (expN < 1 || expN > 30 || r < 1 || p < 1 || dkLen < 1 || 128L * r * (1L << expN) > MAX_MEMORY) {
-            throw new IllegalArgumentException("Unsupported scrypt parameters: " + this);
-        }
         return SCrypt.generate(password, salt, 1 << expN, r, p, dkLen);
     }
 }
