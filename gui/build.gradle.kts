@@ -29,7 +29,3 @@ tasks.jar {
 tasks.shadowJar {
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "include/**")
 }
-
-tasks.assemble {
-    dependsOn(tasks.shadowJar)
-}

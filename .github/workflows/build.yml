@@ -20,7 +20,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build with Gradle
         run: ./gradlew build
@@ -51,14 +51,16 @@ jobs:
         with:
           name: server-shaded
 
+      - name: Rename server jar
+        run: mv server-all.jar server-shaded.jar
+
       - name: Create or update rolling release
         uses: ncipollo/release-action@v1
         with:
           tag: latest
           name: Latest Build
           body: "Rolling release from the latest master build."
-          artifacts: server-all.jar
-          artifactName: server-shaded.jar
+          artifacts: server-shaded.jar
           allowUpdates: true
           removeArtifacts: true
           makeLatest: true
