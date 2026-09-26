@@ -77,4 +77,22 @@ public class ScryptCompatibilityTest {
         ScryptParameters params = new ScryptParameters(expN, r, p, 64, salt.getBytes(StandardCharsets.US_ASCII));
         Assert.assertEquals(HEX.formatHex(params.runScrypt(password.getBytes(StandardCharsets.US_ASCII))), expected);
     }
+
+    @DataProvider
+    public Object[][] unsupportedParameters() {
+        byte[] salt = new byte[32];
+        return new Object[][]{
+                {new ScryptParameters(0, 8, 1, 32, salt)},
+                {new ScryptParameters(33, 8, 1, 32, salt)},
+                {new ScryptParameters(24, 8, 1, 32, salt)}, // 2 GiB
+                {new ScryptParameters(16, 0, 1, 32, salt)},
+                {new ScryptParameters(16, 8, 0, 32, salt)},
+                {new ScryptParameters(16, 8, 1, 0, salt)},
+        };
+    }
+
+    @Test(dataProvider = "unsupportedParameters", expectedExceptions = IllegalArgumentException.class)
+    public void rejectsUnsupportedParameters(ScryptParameters parameters) {
+        parameters.runScrypt("password".getBytes(StandardCharsets.UTF_8));
+    }
 }

@@ -12,6 +12,12 @@ import org.bouncycastle.crypto.generators.SCrypt;
 @Slf4j
 @With
 public class ScryptParameters {
+    /**
+     * Upper bound on scrypt's 128·r·N working memory. Parameters come from the (untrusted) remote blob, so reject
+     * anything that would exhaust memory instead of failing with an {@link OutOfMemoryError}.
+     */
+    private static final long MAX_MEMORY = 1L << 30;
+
     private final int expN;
     private final int r;
     private final int p;
@@ -32,6 +38,9 @@ public class ScryptParameters {
     }
 
     private byte[] doRunScrypt(byte[] password) {
+        if (expN < 1 || expN > 30 || r < 1 || p < 1 || dkLen < 1 || 128L * r * (1L << expN) > MAX_MEMORY) {
+            throw new IllegalArgumentException("Unsupported scrypt parameters: " + this);
+        }
         return SCrypt.generate(password, salt, 1 << expN, r, p, dkLen);
     }
 }
