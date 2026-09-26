@@ -5,3 +5,5 @@ target/
 .gradle/
 .kotlin/
 local.properties
+result
+result-*
