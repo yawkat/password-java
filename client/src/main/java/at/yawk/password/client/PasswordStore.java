@@ -61,7 +61,7 @@ public final class PasswordStore {
         return fromLocalStorage;
     }
 
-    public void reload() throws Exception {
+    public synchronized void reload() throws Exception {
         ClientValue<PasswordBlob> value = client.load();
         blob = value.getValue() == null ? new PasswordBlob() : value.getValue();
         fromLocalStorage = value.isFromLocalStorage();

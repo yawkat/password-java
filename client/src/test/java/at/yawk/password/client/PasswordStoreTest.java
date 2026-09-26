@@ -28,25 +28,26 @@ public class PasswordStoreTest {
         AtomicReference<byte[]> db = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
-            byte[] body;
-            String path = exchange.getRequestURI().getPath();
-            if (path.equals("/challenge")) {
-                body = HashUtil.generateRandomBytes(32);
-            } else if (path.equals("/db") && exchange.getRequestMethod().equals("PUT")) {
-                db.set(exchange.getRequestBody().readAllBytes());
-                body = new byte[0];
-            } else if (path.equals("/db")) {
-                body = db.get();
-            } else {
-                body = null;
+            try (exchange) {
+                byte[] body;
+                String path = exchange.getRequestURI().getPath();
+                if (path.equals("/challenge")) {
+                    body = HashUtil.generateRandomBytes(32);
+                } else if (path.equals("/db") && exchange.getRequestMethod().equals("PUT")) {
+                    db.set(exchange.getRequestBody().readAllBytes());
+                    body = new byte[0];
+                } else if (path.equals("/db")) {
+                    body = db.get();
+                } else {
+                    body = null;
+                }
+                if (body == null) {
+                    exchange.sendResponseHeaders(404, -1);
+                } else {
+                    exchange.sendResponseHeaders(200, body.length == 0 ? -1 : body.length);
+                    exchange.getResponseBody().write(body);
+                }
             }
-            if (body == null) {
-                exchange.sendResponseHeaders(404, -1);
-            } else {
-                exchange.sendResponseHeaders(200, body.length == 0 ? -1 : body.length);
-                exchange.getResponseBody().write(body);
-            }
-            exchange.close();
         });
         server.start();
         url = "http://127.0.0.1:" + server.getAddress().getPort();

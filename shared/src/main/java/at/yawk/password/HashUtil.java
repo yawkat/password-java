@@ -11,10 +11,11 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class HashUtil {
+    private static final SecureRandom RNG = new SecureRandom();
+
     public static byte[] generateRandomBytes(int length)  {
-        SecureRandom rng = new SecureRandom();
         byte[] salt = new byte[length];
-        rng.nextBytes(salt);
+        RNG.nextBytes(salt);
         return salt;
     }
 
