@@ -1,73 +1,198 @@
-Network Layout
-==============
+# Specification
 
-- The client asks for a password and encodes it as `UTF-8` for further use.
-- The client loads the RSA key pair from local storage if present.
-- The client sends `GET /challenge` and receives a sign challenge in the response body.
-- The client sends `GET /db` to the server with the header `Authorization: Signature <hex challenge> <hex signature>`.
-- The server responds with the encrypted blob (described below) or a 404
-    + If 404 is received, the following steps are ignored and an empty decrypted blob is generated on the client instead.
-    + The client uses the parameters from the encrypted blob together with the password bytes (see above) to derive the AES decryption key via scrypt.
-    + The client decrypts the blob with the AES key, unzips it and reads the decrypted contents.
-- When the blob needs to be saved:
-    + The client zips and encrypts the decrypted blob.
-    + The client signs the encrypted blob using the private key.
-    + The client sends a `POST /` request with the signed blob as the body to the server.
-    + The server receives the signed blob.
-        * If we have an old blob saved, we confirm that the new blob is signed with the same public key.
-    + The server stores the encrypted blob to be returned by `GET /`.
+This describes the protocol between client and server and the format of the stored database, as implemented in
+`client` (`PasswordClient`, `DatabaseClient`, `AesCodec`, `model/*`) and `server` (`DatabaseController`,
+`DatabaseState`, `ChallengeTokenFilter`, `SharedSecretUnsetFilter`).
 
-Password storage format
-=======================
+The server stores one opaque blob and never sees the master password or the plaintext. It authenticates clients with
+a *shared secret* derived from the master password. The blob is encrypted with a separate key, also derived from
+the master password.
 
-The base data (password json) will be called `raw data`.
+All numbers are big-endian. `int` is a signed 32-bit integer (4 bytes). `‖` is concatenation.
 
-Decrypted Blob Format
----------------------
+## Master password
 
-The decrypted blob is a simple json document. The RSA keys are generated on first upload.
+The client encodes the master password as UTF-8 (`password` below). Both keys are derived from these bytes.
+
+## Shared secret
 
 ```
+secret = scrypt(password, salt = "CuRdXw06VaLQhV9K", N = 2^14, r = 8, p = 1, dkLen = 8)
+```
+
+The salt is the fixed 16-byte ASCII string above, the same for every user and server. The secret is 8 bytes. The
+server stores it verbatim in its data directory as `shared-secret`.
+
+The secret is deliberately short and cheap, but it is still an offline password-guessing oracle, and the global salt
+allows precomputation. Issue #8 tracks these weaknesses.
+
+## HTTP protocol
+
+The server speaks plain HTTP; TLS is expected to be provided by a reverse proxy. Request and response bodies are raw
+bytes (`application/octet-stream` responses). Requests with a body larger than 4 MB are rejected with 413.
+
+### `GET /challenge`
+
+| Status | Body                                                   |
+|--------|--------------------------------------------------------|
+| 200    | 32 random bytes, the challenge                         |
+| 404    | No shared secret has been set yet                      |
+
+For each challenge, the server remembers the token `SHA-512(secret ‖ challenge)`. Tokens are single-use and expire
+one minute after the challenge was issued. At most 10,000 tokens are outstanding; when full, the oldest is evicted.
+
+### `PUT /shared-secret`
+
+The body is the shared secret.
+
+| Status | Meaning                                                |
+|--------|--------------------------------------------------------|
+| 200    | The secret was stored                                  |
+| 403    | A secret is already set; it is left unchanged         |
+
+The secret can only be set once. It is not authenticated: the first client to reach a fresh server claims it. An
+empty body stores an empty secret.
+
+### Authentication of `/db`
+
+Requests to `/db` carry the header
+
+```
+X-Auth-Token: hex(SHA-512(secret ‖ challenge))
+```
+
+where `challenge` is the body of a preceding `GET /challenge`. The client sends lowercase hex; the server accepts
+either case. A missing, malformed, unknown, expired or already used token yields 403. The token is checked, and
+consumed, before the request body is read. Every `/db` request needs a fresh challenge.
+
+### `GET /db`
+
+| Status | Body                                                   |
+|--------|--------------------------------------------------------|
+| 200    | The stored encrypted blob                              |
+| 403    | Invalid token                                          |
+| 404    | No database has been stored yet                        |
+
+### `PUT /db`
+
+The body is the new encrypted blob. The server does not parse or validate it. An empty body is stored as an empty
+blob.
+
+| Status | Meaning                                                |
+|--------|--------------------------------------------------------|
+| 200    | Stored                                                 |
+| 403    | Invalid token                                          |
+| 413    | Body larger than 4 MB                                  |
+
+### Server storage
+
+Each `PUT /db` writes a new file in the data directory, named by the current time in ISO-8601 UTC
+(`Instant.toString()`, e.g. `2026-09-26T16:54:45.392616657Z`), and then replaces the symlink `latest` with a link to
+it (or with a copy where symlinks are unavailable). `GET /db` returns the content of `latest`. Old files are never
+deleted. On POSIX file systems, `shared-secret` and the database files are created with mode `0600`.
+
+## Encrypted blob
+
+This is the body of `GET /db` and `PUT /db` and the content of the stored files.
+
+```
+int     expN        scrypt cost exponent, N = 2^expN
+int     r           scrypt block size
+int     p           scrypt parallelization
+int     dkLen       Length of the derived key in bytes, also the AES key size
+int     salt_len    Length of the salt
+byte[]  salt        scrypt salt (salt_len bytes)
+byte[]  iv          AES IV, always 16 bytes, no length prefix
+int     body_len    Length of the encrypted body
+byte[]  body        Encrypted body (body_len bytes)
+```
+
+Bytes after `body` are ignored.
+
+### Key derivation
+
+```
+key = scrypt(password, salt, N = 2^expN, r, p, dkLen)
+```
+
+When writing, the client uses `expN = 16`, `r = 8`, `p = 1`, `dkLen = 32` (AES-256) and a fresh random 32-byte salt
+for every save. When reading, it uses whatever parameters the blob contains, but rejects `expN` outside 1..30, `r`,
+`p` or `dkLen` below 1, and parameters needing more than 1 GiB of scrypt memory (`128 · r · N`).
+
+The same `key` is used for AES and for the HMAC.
+
+### Body
+
+```
+json      = UTF-8 JSON of the decrypted blob (see below)
+mac       = HMAC-SHA512(key, json)                         64 bytes
+body      = AES/CFB/NoPadding(key, iv).encrypt(mac ‖ json)
+```
+
+- The HMAC is computed over the plaintext JSON only, not over the header fields or the IV.
+- `mac ‖ json` is encrypted as one continuous CFB stream (128-bit feedback, the JCE default for `AES/CFB`), so
+  `body_len = 64 + len(json)`. There is no padding.
+- The IV is 16 random bytes generated for every save.
+- There is no compression.
+
+To decrypt, the client derives `key` from the header, decrypts `body`, and splits off the first 64 bytes as `mac`. It
+then compares `mac` with `HMAC-SHA512(key, rest)` in constant time and rejects the blob if they differ or if the
+plaintext is shorter than 64 bytes. A wrong password therefore shows up as an HMAC failure. Header fields are not
+authenticated directly, but changing any of them changes the key or the plaintext, so the HMAC check fails.
+
+## Decrypted blob (JSON)
+
+```json
 {
-    "rsa": {
-        "private": "<private RSA key as PKCS8 base64>",
-        "public": "<public RSA key as X509 base64>"
-    },
-    "data": <raw data>
+  "data": {
+    "passwords": [
+      {
+        "name": "example.com",
+        "value": "hunter2\nuser: alice\nnotes..."
+      }
+    ]
+  }
 }
 ```
 
-Encrypted Blob Format
----------------------
+| Field                    | Type            | Meaning                                                              |
+|--------------------------|-----------------|----------------------------------------------------------------------|
+| `data`                   | object          | The password database                                                |
+| `data.passwords`         | array           | Entries, in display order                                            |
+| `data.passwords[].name`  | string          | Entry name                                                           |
+| `data.passwords[].value` | string          | Free text. By convention, the first line (up to `\n` or `\r`) is the password; the rest holds username, notes and so on. |
 
-All numbers are big-endian.
-- int = 32 bits = 4 bytes
+## Client behaviour
 
-```
-int     expN        The exponent of the 'N' parameter (N = 2**expN) of the scrypt key derivation function
-int     r           The 'r' parameter for scrypt
-int     p           The 'p' parameter for scrypt
-int     dkLen       Size of the derived key in bytes
-int     salt_len    Length of the following salt in bytes
-byte[]  salt        Byte array of the scrypt salt, length defined in previous field
-byte[]  iv          IV of the encrypted body
-int     body_len    Length of the encrypted body
-byte[]  body        Encrypted Body
-```
+Every request to `/db` is preceded by `GET /challenge`. If that returns 404, the client sends its shared secret with
+`PUT /shared-secret` and requests the challenge again, so the first client to use a fresh server registers it.
 
-### Encrypted Body
+Non-2xx responses are errors, including redirects that the HTTP client does not follow (e.g. from `http` to
+`https`).
 
-- GZIP `decrypted body`
-- Prepend HMAC-SHA512 header
-- Encrypt using AES with the key derived from the parameters and the password and CFB cipher block mode using a random IV.
+The client keeps a local copy of the encrypted blob in the same layout as the server's data directory (timestamped
+files plus `latest`).
 
-Signed Blob Format
-------------------
+### Load
 
-```
-int     key_len     Length of the public RSA key
-byte[]  key         RSA public key, encoded as X509 DER
-byte[]  signature   SHA512-RSA signature (always 64 bytes)
-int     body_len    Length of the encrypted body
-byte[]  body        Encrypted blob using the 'encrypted blob' format above
-```
+1. Fetch `GET /db`.
+2. If that fails (network error or any error status):
+   - with a local copy, decrypt and verify the local copy and use it, marked as coming from local storage;
+   - without a local copy, a 404 means there is no database yet (the client starts with an empty one); any other
+     error is raised.
+3. Otherwise decrypt and verify the remote blob.
+   - If that fails, fall back to the local copy as above. If there is no local copy, or it also fails, the remote
+     error is raised.
+   - If it succeeds, save the remote blob as the new local copy and use it. The remote blob is only saved locally
+     once it has been verified, so a corrupt or foreign blob on the server never replaces the local copy.
+
+### Save
+
+Each modification encrypts the whole database with a new salt and IV, then:
+
+1. writes the blob to the local copy;
+2. uploads it with `PUT /db`.
+
+If the upload fails, the local copy already contains the new blob and the error is raised. The client does not merge:
+a save replaces whatever the server had, including after the database was loaded from the local copy. The desktop app
+asks for confirmation before the first save in that state.
