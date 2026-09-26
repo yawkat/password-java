@@ -23,6 +23,7 @@ import joptsimple.OptionSpec;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.Value;
+import net.jodah.expiringmap.ExpirationPolicy;
 import net.jodah.expiringmap.ExpiringMap;
 import spark.Request;
 import spark.Spark;
@@ -35,10 +36,24 @@ public class DatabaseServer {
     private final LocalStorageProvider databaseStorageProvider;
     private final LocalStorageProvider sharedSecretStorageProvider;
 
-    private final Set<ByteArrayWrapper> tokens = Collections.newSetFromMap(
-            ExpiringMap.builder()
-                    .expiration(1, TimeUnit.MINUTES)
-                    .build());
+    /**
+     * Upper bound on outstanding challenge tokens. /challenge is unauthenticated, so without a bound a client could
+     * grow the heap until entries expire. When full, the oldest challenge is evicted, so under a flood a legitimate
+     * client whose challenge was evicted gets a 403 on /db and has to retry. This trades unbounded memory growth for
+     * a temporary authentication failure.
+     */
+    static final int MAX_OUTSTANDING_CHALLENGES = 10_000;
+
+    private final Set<ByteArrayWrapper> tokens = createTokenSet();
+
+    static <T> Set<T> createTokenSet() {
+        return Collections.newSetFromMap(
+                ExpiringMap.builder()
+                        .expiration(1, TimeUnit.MINUTES)
+                        .expirationPolicy(ExpirationPolicy.CREATED)
+                        .maxSize(MAX_OUTSTANDING_CHALLENGES)
+                        .build());
+    }
 
     public static void main(String[] args) throws IOException {
         OptionParser parser = new OptionParser();
@@ -90,8 +105,22 @@ public class DatabaseServer {
     }
 
     private boolean takeToken(Request request) {
-        String header = request.headers("X-Auth-Token");
-        return header != null && tokens.remove(new ByteArrayWrapper(HexFormat.of().parseHex(header)));
+        byte[] token = parseToken(request.headers("X-Auth-Token"));
+        return token != null && tokens.remove(new ByteArrayWrapper(token));
+    }
+
+    /**
+     * Parse the client-supplied hex token, returning {@code null} if it is missing or malformed.
+     */
+    static byte[] parseToken(String header) {
+        if (header == null) {
+            return null;
+        }
+        try {
+            return HexFormat.of().parseHex(header);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public void start() {
