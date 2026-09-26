@@ -21,11 +21,18 @@ class DatabaseClient {
     private final String url;
     private final byte[] sharedSecret;
 
-    public ClientValue<byte[]> load() throws IOException {
+    /**
+     * Load the database, preferring the remote copy and falling back to the local copy if the remote is unreachable
+     * or fails verification.
+     *
+     * @param parser Parses and verifies the raw database. A remote database is only saved as the local copy once
+     *               this succeeds, so a remote blob that fails verification never replaces the local copy.
+     */
+    public <T, E extends Exception> ClientValue<T> load(ClientValue.ThrowingFunction<byte[], T, E> parser)
+            throws IOException, E {
+        byte[] remote;
         try {
-            byte[] remote = getRemote();
-            storageProvider.save(remote);
-            return new ClientValue<>(remote, false);
+            remote = getRemote();
         } catch (IOException e) {
             log.info("Could not get db from remote, trying local", e);
 
@@ -38,9 +45,33 @@ class DatabaseClient {
                     throw e;
                 }
             } else {
-                return new ClientValue<>(local, true);
+                return new ClientValue<>(parser.apply(local), true);
             }
         }
+
+        T value;
+        try {
+            value = parser.apply(remote);
+        } catch (Exception e) {
+            log.warn("Could not verify db from remote, trying local", e);
+
+            try {
+                byte[] local = storageProvider.load();
+                if (local != null) {
+                    return new ClientValue<>(parser.apply(local), true);
+                }
+            } catch (Exception localException) {
+                e.addSuppressed(localException);
+            }
+            // rethrow remote exception
+            throw e;
+        }
+        try {
+            storageProvider.save(remote);
+        } catch (IOException e) {
+            log.warn("Could not save db from remote to local storage", e);
+        }
+        return new ClientValue<>(value, false);
     }
 
     public void save(byte[] data) throws IOException {
