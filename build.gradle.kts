@@ -27,7 +27,5 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useTestNG()
-        // lambdaworks scrypt loads its JNI library via System.load
-        jvmArgs("--enable-native-access=ALL-UNNAMED")
     }
 }

@@ -1,5 +1,4 @@
 dependencies {
-    api(libs.scrypt)
     api(libs.jackson.databind)
 }
 

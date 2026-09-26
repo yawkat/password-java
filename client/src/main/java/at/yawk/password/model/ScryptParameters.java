@@ -1,11 +1,9 @@
 package at.yawk.password.model;
 
-import com.lambdaworks.crypto.SCrypt;
-import java.security.GeneralSecurityException;
-import lombok.SneakyThrows;
 import lombok.Value;
 import lombok.With;
 import lombok.extern.slf4j.Slf4j;
+import org.bouncycastle.crypto.generators.SCrypt;
 
 /**
  * @author yawkat
@@ -14,13 +12,30 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @With
 public class ScryptParameters {
+    /**
+     * Upper bound on scrypt's 128·r·N working memory. Parameters come from the (untrusted) remote blob, so reject
+     * anything that would exhaust memory instead of failing with an {@link OutOfMemoryError}.
+     */
+    private static final long MAX_MEMORY = 1L << 30;
+
     private final int expN;
     private final int r;
     private final int p;
     private final int dkLen;
     private final byte[] salt;
 
-    @SneakyThrows(GeneralSecurityException.class)
+    public ScryptParameters(int expN, int r, int p, int dkLen, byte[] salt) {
+        if (expN < 1 || expN > 30 || r < 1 || p < 1 || dkLen < 1 || 128L * r * (1L << expN) > MAX_MEMORY) {
+            throw new IllegalArgumentException(
+                    "Unsupported scrypt parameters: expN=" + expN + ", r=" + r + ", p=" + p + ", dkLen=" + dkLen);
+        }
+        this.expN = expN;
+        this.r = r;
+        this.p = p;
+        this.dkLen = dkLen;
+        this.salt = salt;
+    }
+
     public byte[] runScrypt(byte[] password) {
         if (log.isDebugEnabled()) {
             log.debug("Hashing password with parameters {}", this);
@@ -34,7 +49,7 @@ public class ScryptParameters {
         }
     }
 
-    private byte[] doRunScrypt(byte[] password) throws GeneralSecurityException {
-        return SCrypt.scrypt(password, salt, 1 << expN, r, p, dkLen);
+    private byte[] doRunScrypt(byte[] password) {
+        return SCrypt.generate(password, salt, 1 << expN, r, p, dkLen);
     }
 }
