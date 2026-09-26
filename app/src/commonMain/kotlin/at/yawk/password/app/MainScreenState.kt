@@ -35,6 +35,12 @@ class MainScreenState {
 
     var dialog by mutableStateOf<MainDialog?>(null)
 
+    /**
+     * Compact (phone) layout only: the selected entry is shown on its own page instead of the list.
+     */
+    var detailOpen by mutableStateOf(false)
+        private set
+
     val isModified: Boolean
         get() {
             if (!editing) {
@@ -110,6 +116,26 @@ class MainScreenState {
      */
     fun reselectByName(entries: List<PasswordEntry>, name: String?) {
         selected = entries.firstOrNull { it.name == name }
+    }
+
+    /**
+     * The entry shown on the detail page of the compact layout, or `null` to show the list. The page closes by itself
+     * when its entry is gone (deleted, reloaded, or hidden by the search).
+     */
+    fun detail(entries: List<PasswordEntry>): PasswordEntry? =
+        if (detailOpen) visible(entries).firstOrNull { it === selected } else null
+
+    fun openDetail(entry: PasswordEntry) {
+        if (!editing) {
+            selected = entry
+            revealed = false
+            detailOpen = true
+        }
+    }
+
+    fun closeDetail() {
+        detailOpen = false
+        revealed = false
     }
 
     fun startEditing(entry: PasswordEntry?) {

@@ -3,15 +3,20 @@ package at.yawk.password.app
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldState
-
-
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
@@ -24,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,6 +46,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
 /**
@@ -49,6 +57,15 @@ import androidx.compose.ui.unit.dp
 class WindowHooks {
     internal var closeHandler: ((onConfirmed: () -> Unit) -> Unit)? = null
     internal var keyHandler: ((KeyEvent) -> Boolean)? = null
+    internal var backgroundHandler: (() -> Unit)? = null
+
+    /**
+     * To be called when the app goes to the background (Android). Forgets a master password that was typed but not
+     * submitted; locking is up to the caller ([PasswordViewModel.lockWhenIdle]).
+     */
+    fun onBackground() {
+        backgroundHandler?.invoke()
+    }
 
     fun requestClose(onConfirmed: () -> Unit) {
         val h = closeHandler
@@ -69,12 +86,17 @@ fun titleFor(state: UiState) = when (state) {
     else -> "Unlock password database"
 }
 
+/**
+ * @param touchInput Whether this runs on a touch device (Android). The unlocked screen then uses a single-pane layout
+ * made for touch and small screens instead of the desktop layout, which relies on keyboard shortcuts and double-clicks.
+ */
 @Composable
 fun App(
     viewModel: PasswordViewModel,
     clipboard: SecretClipboard,
     hooks: WindowHooks,
     onExit: () -> Unit,
+    touchInput: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
@@ -82,18 +104,23 @@ fun App(
             // Not rememberSaveable, so the password never ends up in saved instance state. The field is cleared (with
             // its undo history) as soon as the view model has taken the password, and replaced for every session.
             val password = remember(state is UiState.Unlocked) { TextFieldState() }
-            when (val s = state) {
-                is UiState.Locked -> UnlockScreen(s.config, s.error, busy = false, password, viewModel, onExit)
-                is UiState.Unlocking -> UnlockScreen(s.config, null, busy = true, password, viewModel, onExit)
-                is UiState.ConfirmCreate -> {
-                    UnlockScreen(s.config, null, busy = true, password, viewModel, onExit)
-                    CreateDatabaseDialog(s.config, viewModel)
+            // keep clear of the system bars, cutouts and the soft keyboard (Android; no insets on desktop)
+            Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                when (val s = state) {
+                    is UiState.Locked ->
+                        UnlockScreen(s.config, s.error, busy = false, password, viewModel, hooks, touchInput, onExit)
+                    is UiState.Unlocking ->
+                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
+                    is UiState.ConfirmCreate -> {
+                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
+                        CreateDatabaseDialog(s.config, viewModel)
+                    }
+                    is UiState.Unlocked -> {
+                        val mainState = remember { MainScreenState() }
+                        MainScreen(s, mainState, viewModel, clipboard, hooks, touchInput)
+                    }
+                    is UiState.Error -> ErrorScreen(s.message, onExit)
                 }
-                is UiState.Unlocked -> {
-                    val mainState = remember { MainScreenState() }
-                    MainScreen(s, mainState, viewModel, clipboard, hooks)
-                }
-                is UiState.Error -> ErrorScreen(s.message, onExit)
             }
         }
     }
@@ -106,6 +133,8 @@ private fun UnlockScreen(
     busy: Boolean,
     password: TextFieldState,
     viewModel: PasswordViewModel,
+    hooks: WindowHooks,
+    touchInput: Boolean,
     onExit: () -> Unit,
 ) {
     var url by remember(config.url) { mutableStateOf(config.url) }
@@ -122,6 +151,10 @@ private fun UnlockScreen(
             focus.requestFocus()
         }
     }
+    DisposableEffect(hooks, password) {
+        hooks.backgroundHandler = { password.clearSecret() }
+        onDispose { hooks.backgroundHandler = null }
+    }
     val onEnter = Modifier.onPreviewKeyEvent {
         if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter)) {
             unlock()
@@ -130,37 +163,54 @@ private fun UnlockScreen(
             false
         }
     }
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Unlock password database", style = MaterialTheme.typography.headlineSmall)
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("Server") },
-                singleLine = true,
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth().then(onEnter),
-            )
-            OutlinedSecureTextField(
-                state = password,
-                label = { Text("Master password") },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus).then(onEnter),
-            )
-            Text(
-                "Local copy: ${config.storageDirectory}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (error != null) {
-                Text(error, color = MaterialTheme.colorScheme.error)
-            }
-            if (busy) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                TextButton(onClick = onExit) { Text("Close") }
-                Button(onClick = ::unlock, enabled = !busy) { Text("Unlock") }
+    // centered, and scrollable when the soft keyboard leaves too little room
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.verticalScroll(rememberScrollState()).heightIn(min = maxHeight).fillMaxWidth().padding(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(Modifier.widthIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Unlock password database", style = MaterialTheme.typography.headlineSmall)
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Server") },
+                    singleLine = true,
+                    enabled = !busy,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        autoCorrectEnabled = false,
+                        imeAction = ImeAction.Next,
+                    ),
+                    modifier = Modifier.fillMaxWidth().then(onEnter),
+                )
+                OutlinedSecureTextField(
+                    state = password,
+                    label = { Text("Master password") },
+                    enabled = !busy,
+                    // the soft keyboard's action button unlocks
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    onKeyboardAction = { unlock() },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).then(onEnter),
+                )
+                Text(
+                    "Local copy: ${config.storageDirectory}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+                if (busy) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    // Android apps are left with the back or home button
+                    if (!touchInput) {
+                        TextButton(onClick = onExit) { Text("Close") }
+                    }
+                    Button(onClick = ::unlock, enabled = !busy) { Text("Unlock") }
+                }
             }
         }
     }
@@ -187,6 +237,8 @@ private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel
                 OutlinedSecureTextField(
                     state = repeated,
                     label = { Text("Repeat the master password") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    onKeyboardAction = { create() },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter)) {
                             create()

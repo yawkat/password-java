@@ -19,9 +19,14 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
+      # for the Android app; AGP installs the platform and build tools it needs
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # builds (but does not upload) the debug and the unsigned release APK
       - name: Build with Gradle
         run: ./gradlew build
 

@@ -67,6 +67,33 @@ class MainScreenStateTest {
     }
 
     @Test
+    fun detailPage() {
+        val ui = MainScreenState()
+        val entries = listOf(entry("a"), entry("b"))
+        assertNull(ui.detail(entries))
+        ui.revealed = true
+        ui.openDetail(entries[1])
+        assertSame(entries[1], ui.detail(entries))
+        assertFalse(ui.revealed, "a newly opened entry starts hidden")
+
+        // hidden by the search, or gone after a reload: no page
+        ui.query = androidx.compose.ui.text.input.TextFieldValue("a")
+        assertNull(ui.detail(entries))
+        ui.query = androidx.compose.ui.text.input.TextFieldValue("")
+        assertNull(ui.detail(listOf(entry("a"), entry("b"))))
+
+        ui.revealed = true
+        ui.closeDetail()
+        assertNull(ui.detail(entries))
+        assertFalse(ui.revealed)
+
+        // not while editing
+        ui.startEditing(entries[0])
+        ui.openDetail(entries[0])
+        assertFalse(ui.detailOpen)
+    }
+
+    @Test
     fun selectAfterDelete() {
         val ui = MainScreenState()
         val before = listOf(entry("a"), entry("b"), entry("c"))

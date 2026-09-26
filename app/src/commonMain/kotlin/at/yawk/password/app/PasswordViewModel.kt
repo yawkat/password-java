@@ -145,6 +145,25 @@ class PasswordViewModel(
         }
     }
 
+    /**
+     * Lock as soon as a running operation (unlocking, saving, reloading) has finished, also discarding an offered
+     * database creation. Unlike [lock], this never refuses. Used when the app goes to the background on Android.
+     */
+    fun lockWhenIdle() {
+        viewModelScope.launch {
+            // the mutex is fair, so this runs after any operation that has already been started
+            mutex.withLock {
+                val config = config ?: return@withLock
+                if (_state.value is UiState.Unlocked || _state.value is UiState.ConfirmCreate) {
+                    store = null
+                    pendingClient = null
+                    wipePassword()
+                    _state.value = UiState.Locked(config)
+                }
+            }
+        }
+    }
+
     private suspend fun saveUrl(url: String): String? = try {
         withContext(ioDispatcher) { platform.saveUrl(url) }
         null

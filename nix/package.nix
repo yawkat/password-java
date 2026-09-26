@@ -45,7 +45,8 @@ stdenv.mkDerivation (finalAttrs: {
 
   passthru = { inherit gradle withApp; };
 
-  gradleFlags = lib.optional (!withApp) "-Ppassword.app=false";
+  # The Android app needs the Android SDK and is not built here (android/ and build-logic/ aren't part of the source).
+  gradleFlags = [ "-Ppassword.android=false" ] ++ lib.optional (!withApp) "-Ppassword.app=false";
 
   # the server's application distribution (lib/*.jar and start scripts; Micronaut doesn't support fat jars well)
   # and the desktop app's uber jar

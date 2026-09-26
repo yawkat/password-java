@@ -10,6 +10,14 @@ compose = "1.12.1"
 compose-material3 = "1.9.0"
 androidx-lifecycle = "2.11.0"
 kotlinx-coroutines = "1.11.0"
+# Android Gradle Plugin. It is only put on the build classpath when the Android build is enabled, see build.gradle.kts.
+agp = "9.4.1"
+androidx-activity = "1.13.0"
+android-compileSdk = "37"
+# newer than AGP's default (36.0.0)
+android-buildTools = "37.0.0"
+# Android 10
+android-minSdk = "29"
 
 [libraries]
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -31,6 +39,9 @@ compose-material3 = { module = "org.jetbrains.compose.material3:material3", vers
 androidx-lifecycle-viewmodel-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
+android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 
 [plugins]
 lombok = { id = "io.freefair.lombok", version = "9.7.0" }

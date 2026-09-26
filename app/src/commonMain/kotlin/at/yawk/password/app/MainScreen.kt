@@ -6,36 +6,45 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.PlainTooltip
-import androidx.compose.material3.TooltipAnchorPosition
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -43,8 +52,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,8 +75,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -83,6 +97,9 @@ private val OfflineBannerColor = Color(0xFFF67400)
 /**
  * The unlocked database: toolbar, offline banner, search and entry list on the left, the selected entry (or the
  * editor) on the right, and a status bar. Keyboard shortcuts follow the old Qt GUI.
+ *
+ * With [touchInput] (Android), a compact single-pane layout instead: the list, where tapping an entry copies its
+ * password (like the old Android app), and separate pages for an entry and the editor, which the back button closes.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -92,6 +109,7 @@ fun MainScreen(
     viewModel: PasswordViewModel,
     clipboard: SecretClipboard,
     hooks: WindowHooks,
+    touchInput: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -116,6 +134,11 @@ fun MainScreen(
     val idle = !busy && !editing
 
     // ---- actions ----
+
+    // The list only takes the focus in the desktop layout; the compact layout doesn't always show it.
+    fun focusList() {
+        if (!touchInput) listFocus.requestFocus()
+    }
 
     fun copy(entry: PasswordEntry?, full: Boolean) {
         if (entry == null || ui.editing) return
@@ -166,7 +189,7 @@ fun MainScreen(
                 }
                 ui.stopEditing()
                 ui.selected = saved
-                listFocus.requestFocus()
+                focusList()
             }
         }
     }
@@ -175,7 +198,7 @@ fun MainScreen(
         if (!ui.editing || latest.busy) return
         val cancel: () -> Unit = {
             ui.stopEditing()
-            listFocus.requestFocus()
+            focusList()
         }
         if (ui.isModified) ui.dialog = MainDialog.ConfirmDiscard(cancel) else cancel()
     }
@@ -194,6 +217,8 @@ fun MainScreen(
                     // keep the selection at the same row
                     val after = (viewModel.state.value as? UiState.Unlocked)?.entries ?: return@launch
                     ui.selectAfterDelete(before, after, entry)
+                    // back to the list instead of showing the next entry
+                    if (ui.detailOpen) ui.closeDetail()
                 }
             }
         }
@@ -233,12 +258,15 @@ fun MainScreen(
         }
     }
 
-    LaunchedEffect(Unit) { searchFocus.requestFocus() }
+    // a phone would show the soft keyboard right away, covering half of the list
+    if (!touchInput) {
+        LaunchedEffect(Unit) { searchFocus.requestFocus() }
+    }
 
-    // keep the current entry in view
+    // keep the current entry in view (in the compact layout, the selection only changes by tapping a visible row)
     val currentIndex = visible.indexOfFirst { it === current }
     LaunchedEffect(currentIndex) {
-        if (currentIndex >= 0) {
+        if (currentIndex >= 0 && !touchInput) {
             val info = listState.layoutInfo.visibleItemsInfo
             if (info.none { it.index == currentIndex && it.offset >= 0 } || info.lastOrNull()?.index == currentIndex) {
                 listState.scrollToItem(currentIndex)
@@ -270,96 +298,175 @@ fun MainScreen(
 
     // ---- layout ----
 
-    Column(Modifier.fillMaxSize()) {
-        Toolbar(
-            idle = idle,
-            editing = editing,
-            hasSelection = current != null,
-            revealed = ui.revealed,
-            onNew = ::newEntry,
-            onEdit = ::editEntry,
-            onDelete = ::deleteEntry,
-            onCopy = { copy(currentNow(), full = false) },
-            onCopyAll = { copy(currentNow(), full = true) },
-            onReveal = { ui.revealed = !ui.revealed },
-            onReload = ::reload,
-            onLock = ::lock,
-            clearAfterSeconds = clipboard.clearAfterSeconds,
-        )
-        HorizontalDivider()
-        if (state.fromLocalStorage) {
-            Text(
-                "Offline: showing the local copy, which may be outdated. Saving will overwrite the server copy.",
-                color = Color.Black,
-                modifier = Modifier.fillMaxWidth().background(OfflineBannerColor).padding(8.dp),
+    // back closes the editor (asking about unsaved changes), then the entry page, then clears the search. Dialogs
+    // handle back themselves.
+    PlatformBackHandler(enabled = (editing && !busy) || ui.detailOpen || ui.query.text.isNotEmpty()) {
+        when {
+            ui.editing -> cancelEditing()
+            ui.detailOpen -> ui.closeDetail()
+            else -> ui.query = TextFieldValue("")
+        }
+    }
+
+    if (touchInput) {
+        val detail = ui.detail(state.entries)
+        if (ui.detailOpen && detail == null) {
+            // the entry is gone (deleted, or new objects after a reload)
+            SideEffect { ui.closeDetail() }
+        }
+        Column(Modifier.fillMaxSize()) {
+            when {
+                editing -> {
+                    CompactBar(
+                        title = if (ui.editTarget == null) "New entry" else "Edit entry",
+                        onBack = ::cancelEditing,
+                        backEnabled = !busy,
+                    ) {
+                        Button(onClick = ::save, enabled = !busy) { Text("Save") }
+                    }
+                    HorizontalDivider()
+                    CompactEditor(ui, busy, nameFocus, Modifier.weight(1f))
+                }
+                detail != null -> {
+                    CompactBar(title = detail.name.orEmpty(), onBack = { ui.closeDetail() })
+                    HorizontalDivider()
+                    CompactDetail(
+                        entry = detail,
+                        idle = idle,
+                        revealed = ui.revealed,
+                        onCopy = { copy(detail, full = it) },
+                        onReveal = { ui.revealed = !ui.revealed },
+                        onEdit = ::editEntry,
+                        onDelete = ::deleteEntry,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                else -> {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Passwords", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        TextButton(onClick = ::newEntry, enabled = idle) { Text("New") }
+                        TextButton(onClick = ::reload, enabled = idle) { Text("Reload") }
+                        TextButton(onClick = ::lock, enabled = idle) { Text("Lock") }
+                    }
+                    HorizontalDivider()
+                    if (state.fromLocalStorage) {
+                        OfflineBanner()
+                    }
+                    SearchField(
+                        value = ui.query,
+                        onValueChange = { ui.query = it },
+                        enabled = idle,
+                        touchInput = true,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+                            .focusRequester(searchFocus),
+                    )
+                    CompactEntryList(
+                        entries = visible,
+                        enabled = idle,
+                        listState = listState,
+                        onCopy = {
+                            ui.select(it)
+                            copy(it, full = false)
+                        },
+                        onOpen = { ui.openDetail(it) },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                }
+            }
+            HorizontalDivider()
+            StatusBar(state.status, busy, visible.size, state.entries.size)
+        }
+    } else {
+        Column(Modifier.fillMaxSize()) {
+            Toolbar(
+                idle = idle,
+                editing = editing,
+                hasSelection = current != null,
+                revealed = ui.revealed,
+                onNew = ::newEntry,
+                onEdit = ::editEntry,
+                onDelete = ::deleteEntry,
+                onCopy = { copy(currentNow(), full = false) },
+                onCopyAll = { copy(currentNow(), full = true) },
+                onReveal = { ui.revealed = !ui.revealed },
+                onReload = ::reload,
+                onLock = ::lock,
+                clearAfterSeconds = clipboard.clearAfterSeconds,
             )
-        }
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Column(Modifier.weight(1f).fillMaxHeight().padding(8.dp)) {
-                SearchField(
-                    value = ui.query,
-                    onValueChange = { ui.query = it },
-                    enabled = idle,
-                    modifier = Modifier.fillMaxWidth().focusRequester(searchFocus).onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (event.key) {
-                            Key.DirectionUp -> ui.moveSelection(entries(), -1).let { true }
-                            Key.DirectionDown -> ui.moveSelection(entries(), 1).let { true }
-                            Key.PageUp -> ui.moveSelection(entries(), -PAGE_SIZE).let { true }
-                            Key.PageDown -> ui.moveSelection(entries(), PAGE_SIZE).let { true }
-                            Key.Enter, Key.NumPadEnter -> copy(currentNow(), full = false).let { true }
-                            Key.Escape -> if (ui.query.text.isNotEmpty()) {
-                                ui.query = TextFieldValue("")
-                                true
-                            } else {
-                                false
-                            }
-                            // don't claim Ctrl+C without a selection, copy the selected password instead
-                            Key.C -> if (event.isCtrlPressed && !event.isShiftPressed && ui.query.selection.collapsed) {
-                                copy(currentNow(), full = false)
-                                true
-                            } else {
-                                false
-                            }
-                            else -> false
-                        }
-                    },
-                )
-                Spacer(Modifier.height(8.dp))
-                EntryList(
-                    entries = visible,
-                    current = current,
-                    enabled = idle,
-                    listState = listState,
-                    onSelect = {
-                        ui.select(it)
-                        listFocus.requestFocus()
-                    },
-                    onActivate = {
-                        ui.select(it)
-                        copy(it, full = false)
-                    },
-                    onCopy = { copy(it, full = false) },
-                    modifier = Modifier.weight(1f).fillMaxWidth().focusRequester(listFocus).onKeyEvent { event ->
-                        listKey(event, ui, entries(), { copy(currentNow(), it) }, ::deleteEntry, searchFocus)
-                    },
-                )
+            HorizontalDivider()
+            if (state.fromLocalStorage) {
+                OfflineBanner()
             }
-            VerticalDivider()
-            Box(Modifier.weight(2f).fillMaxHeight().padding(12.dp)) {
-                EntryPane(
-                    ui = ui,
-                    entry = current,
-                    busy = busy,
-                    nameFocus = nameFocus,
-                    onSave = ::save,
-                    onCancel = ::cancelEditing,
-                    onTab = { forward -> focusManager.moveFocus(if (forward) FocusDirection.Next else FocusDirection.Previous) },
-                )
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                Column(Modifier.weight(1f).fillMaxHeight().padding(8.dp)) {
+                    SearchField(
+                        value = ui.query,
+                        onValueChange = { ui.query = it },
+                        enabled = idle,
+                        modifier = Modifier.fillMaxWidth().focusRequester(searchFocus).onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionUp -> ui.moveSelection(entries(), -1).let { true }
+                                Key.DirectionDown -> ui.moveSelection(entries(), 1).let { true }
+                                Key.PageUp -> ui.moveSelection(entries(), -PAGE_SIZE).let { true }
+                                Key.PageDown -> ui.moveSelection(entries(), PAGE_SIZE).let { true }
+                                Key.Enter, Key.NumPadEnter -> copy(currentNow(), full = false).let { true }
+                                Key.Escape -> if (ui.query.text.isNotEmpty()) {
+                                    ui.query = TextFieldValue("")
+                                    true
+                                } else {
+                                    false
+                                }
+                                // don't claim Ctrl+C without a selection, copy the selected password instead
+                                Key.C -> if (event.isCtrlPressed && !event.isShiftPressed && ui.query.selection.collapsed) {
+                                    copy(currentNow(), full = false)
+                                    true
+                                } else {
+                                    false
+                                }
+                                else -> false
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    EntryList(
+                        entries = visible,
+                        current = current,
+                        enabled = idle,
+                        listState = listState,
+                        onSelect = {
+                            ui.select(it)
+                            listFocus.requestFocus()
+                        },
+                        onActivate = {
+                            ui.select(it)
+                            copy(it, full = false)
+                        },
+                        onCopy = { copy(it, full = false) },
+                        modifier = Modifier.weight(1f).fillMaxWidth().focusRequester(listFocus).onKeyEvent { event ->
+                            listKey(event, ui, entries(), { copy(currentNow(), it) }, ::deleteEntry, searchFocus)
+                        },
+                    )
+                }
+                VerticalDivider()
+                Box(Modifier.weight(2f).fillMaxHeight().padding(12.dp)) {
+                    EntryPane(
+                        ui = ui,
+                        entry = current,
+                        busy = busy,
+                        nameFocus = nameFocus,
+                        onSave = ::save,
+                        onCancel = ::cancelEditing,
+                        onTab = { forward -> focusManager.moveFocus(if (forward) FocusDirection.Next else FocusDirection.Previous) },
+                    )
+                }
             }
+            HorizontalDivider()
+            StatusBar(state.status, busy, visible.size, state.entries.size)
         }
-        HorizontalDivider()
-        StatusBar(state.status, busy, visible.size, state.entries.size)
     }
 
     LaunchedEffect(editing) {
@@ -376,7 +483,7 @@ fun MainScreen(
             hadDialog = true
         } else if (hadDialog) {
             hadDialog = false
-            if (ui.editing) nameFocus.requestFocus() else listFocus.requestFocus()
+            if (ui.editing) nameFocus.requestFocus() else focusList()
         }
     }
 
@@ -517,11 +624,13 @@ private fun SearchField(
     onValueChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
     modifier: Modifier,
+    touchInput: Boolean = false,
 ) {
+    val keyboard = LocalSoftwareKeyboardController.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = { Text("Search (Ctrl+F)") },
+        placeholder = { Text(if (touchInput) "Search" else "Search (Ctrl+F)") },
         singleLine = true,
         enabled = enabled,
         trailingIcon = if (value.text.isNotEmpty() && enabled) {
@@ -529,8 +638,185 @@ private fun SearchField(
         } else {
             null
         },
+        // the soft keyboard's search button just hides the keyboard, the list filters while typing
+        keyboardOptions = if (touchInput) {
+            KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search)
+        } else {
+            KeyboardOptions.Default
+        },
+        keyboardActions = if (touchInput) KeyboardActions(onSearch = { keyboard?.hide() }) else KeyboardActions.Default,
         modifier = modifier,
     )
+}
+
+/**
+ * Title bar of a page of the compact layout, with a back button.
+ */
+@Composable
+private fun CompactBar(
+    title: String,
+    onBack: () -> Unit,
+    backEnabled: Boolean = true,
+    actions: @Composable () -> Unit = {},
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onBack, enabled = backEnabled) { Text("‹ Back") }
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+        )
+        actions()
+        Spacer(Modifier.width(8.dp))
+    }
+}
+
+@Composable
+private fun OfflineBanner() {
+    Text(
+        "Offline: showing the local copy, which may be outdated. Saving will overwrite the server copy.",
+        color = Color.Black,
+        modifier = Modifier.fillMaxWidth().background(OfflineBannerColor).padding(8.dp),
+    )
+}
+
+/**
+ * The entry list of the compact layout: tapping a row copies the password, long-pressing it or its › button opens the
+ * entry's page.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompactEntryList(
+    entries: List<PasswordEntry>,
+    enabled: Boolean,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onCopy: (PasswordEntry) -> Unit,
+    onOpen: (PasswordEntry) -> Unit,
+    modifier: Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(modifier) {
+        Text(
+            if (entries.isEmpty()) "No entries" else "Tap to copy the password, long-press for details",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            items(entries) { entry ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .combinedClickable(
+                            enabled = enabled,
+                            onClick = { onCopy(entry) },
+                            onLongClick = { onOpen(entry) },
+                            onLongClickLabel = "Show details",
+                        )
+                        .padding(start = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        entry.name.orEmpty(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = { onOpen(entry) },
+                        enabled = enabled,
+                        modifier = Modifier.sizeIn(minWidth = 56.dp, minHeight = 56.dp)
+                            .semantics { contentDescription = "Details of ${entry.name}" },
+                    ) {
+                        Text("›", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+                HorizontalDivider(color = colors.outlineVariant)
+            }
+        }
+    }
+}
+
+/**
+ * Page of one entry in the compact layout.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CompactDetail(
+    entry: PasswordEntry,
+    idle: Boolean,
+    revealed: Boolean,
+    onCopy: (full: Boolean) -> Unit,
+    onReveal: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier,
+) {
+    Column(
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = { onCopy(false) }) { Text("Copy password") }
+            OutlinedButton(onClick = { onCopy(true) }) { Text("Copy all") }
+            if (revealed) {
+                FilledTonalButton(onClick = onReveal) { Text("Hide") }
+            } else {
+                OutlinedButton(onClick = onReveal) { Text("Reveal") }
+            }
+            OutlinedButton(onClick = onEdit, enabled = idle) { Text("Edit") }
+            OutlinedButton(onClick = onDelete, enabled = idle) { Text("Delete") }
+        }
+        Text(
+            if (revealed) entry.value.orEmpty() else maskedValue(entry.value),
+            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+        )
+    }
+}
+
+/**
+ * The editor page of the compact layout. Saving and cancelling are in its title bar, so they stay reachable while the
+ * soft keyboard is open.
+ */
+@Composable
+private fun CompactEditor(ui: MainScreenState, busy: Boolean, nameFocus: FocusRequester, modifier: Modifier) {
+    Column(
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = ui.draftName,
+            onValueChange = { ui.draftName = it },
+            label = { Text("Name") },
+            singleLine = true,
+            enabled = !busy,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            modifier = Modifier.fillMaxWidth().focusRequester(nameFocus),
+        )
+        OutlinedTextField(
+            value = ui.draftValue,
+            onValueChange = { ui.draftValue = it },
+            label = { Text("Value") },
+            placeholder = { Text("First line: password\nFurther lines: username, notes, …") },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+            enabled = !busy,
+            minLines = 6,
+            // no suggestions or learning from what is typed here
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(
+            onClick = { ui.draftValue = withGeneratedPassword(ui.draftValue) },
+            enabled = !busy,
+        ) { Text("Generate password") }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

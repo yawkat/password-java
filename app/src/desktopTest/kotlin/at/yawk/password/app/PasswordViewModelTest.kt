@@ -194,6 +194,39 @@ class PasswordViewModelTest {
     }
 
     @Test
+    fun lockWhenIdleWaitsForRunningOperation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        // nothing to lock yet
+        vm.lockWhenIdle()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.confirmCreate("secret")
+        vm.await<UiState.Unlocked>()
+        val sessionPassword = passwords.last()
+
+        // unlike lock(), this is not refused while saving, but waits for the save to finish
+        val save = vm.save(null, "a", "1")
+        vm.lockWhenIdle()
+        assertNotNull(runBlocking { save.await() })
+        assertEquals(server.url, vm.await<UiState.Locked>().config.url)
+        assertNotNull(server.db.get(), "the save went through")
+        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped")
+    }
+
+    @Test
+    fun lockWhenIdleDiscardsCreation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        // called while unlocking: takes effect once the unlock is done
+        vm.lockWhenIdle()
+        vm.await<UiState.Locked>()
+        assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped")
+        assertNull(server.db.get())
+    }
+
+    @Test
     fun changedUrlIsSaved() {
         val vm = newViewModel()
         vm.await<UiState.Locked>()
