@@ -38,6 +38,8 @@ stdenv.mkDerivation (finalAttrs: {
     data = ./deps.json;
   };
 
+  passthru = { inherit gradle; };
+
   gradleBuildTask = ":server:shadowJar";
 
   doCheck = true;
@@ -50,7 +52,7 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   meta = {
-    description = "Jars of the password-java password manager";
+    description = "Server jar of the password-java password manager";
     homepage = "https://github.com/yawkat/password-java";
     platforms = lib.platforms.linux;
     sourceProvenance = with lib.sourceTypes; [

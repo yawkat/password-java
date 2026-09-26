@@ -193,10 +193,6 @@
    "module": "sha256-PSJwREjpjf1XjF31ZG3QqYrsBAgLCKMkXPi+uKJdy10=",
    "pom": "sha256-OMO6UqDq3j4+rMWxNJnVbhA4zLrY7Eu3lCbcIUMrRtA="
   },
-  "com/lambdaworks#scrypt/1.4.0": {
-   "jar": "sha256-moLSGAmfsUwQwOhufu/uvYwQTekgrNxHuLS3pob7c7Q=",
-   "pom": "sha256-ayT557tiVQJB4oYof1J6fcRjZpoLfPWs3lmemYQt5yE="
-  },
   "com/sparkjava#spark-core/2.9.4": {
    "jar": "sha256-mfRxdpUYTims4kc1vFOadJd3VFKzgbgIAzWtrjqYXDo=",
    "pom": "sha256-AsTWio2fjTTxGyyXUABlkZWfUiKIf8vmxw3PK7S3Yhk="
@@ -226,6 +222,10 @@
   "net/sf/jopt-simple#jopt-simple/5.0.4": {
    "jar": "sha256-3ybMWPI19HfbB/dTulo6skPr5Xidn4ns9o3WLqmmbCg=",
    "pom": "sha256-amd2O3avzZyAuV5cXiR4LRjMGw49m0VK0/h1THa3aBU="
+  },
+  "org/bouncycastle#bcprov-jdk18on/1.86": {
+   "jar": "sha256-KvGQswDLsLNeJIzPX0oGtgcgMK6z2nqY7HOr5bTLNx8=",
+   "pom": "sha256-lwtwy3WhhGObb7m6PEZaympOGl8//01lzoV0sv157zg="
   },
   "org/eclipse/jetty#jetty-client/9.4.48.v20220622": {
    "jar": "sha256-f4n+CQDTaylidZmZkqatdtUjvjVIfWE9j7VkNMNNHRU=",

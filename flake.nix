@@ -37,7 +37,7 @@
         default = pkgs.mkShell {
           packages = [
             pkgs.jdk25
-            (pkgs.gradle_9.override { java = pkgs.jdk25; })
+            self.packages.${pkgs.stdenv.hostPlatform.system}.password-jars.gradle
           ];
         };
       });
