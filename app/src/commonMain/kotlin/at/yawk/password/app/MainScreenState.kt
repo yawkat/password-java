@@ -143,10 +143,8 @@ fun copyEntry(clipboard: SecretClipboard, entry: PasswordEntry, full: Boolean): 
 }
 
 sealed interface MainDialog {
-    class ConfirmDelete(val entry: PasswordEntry) : MainDialog {
-        // never print the entry (Lombok's toString includes the value)
-        override fun toString() = "ConfirmDelete"
-    }
+    // not a data class: entries are compared by identity
+    class ConfirmDelete(val entry: PasswordEntry) : MainDialog
 
     class ConfirmDiscard(val onDiscard: () -> Unit) : MainDialog
     class ConfirmOfflineSave(val onConfirm: () -> Unit) : MainDialog

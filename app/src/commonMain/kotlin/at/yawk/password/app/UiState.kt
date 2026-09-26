@@ -48,11 +48,6 @@ sealed interface UiState {
             error == other.error
 
         override fun hashCode() = System.identityHashCode(entries)
-
-        // never print entries: Lombok's PasswordEntry.toString includes the value
-        override fun toString() =
-            "Unlocked(entries=${entries.size}, fromLocalStorage=$fromLocalStorage, busy=$busy, " +
-                "offlineSaveConfirmed=$offlineSaveConfirmed, status=$status, error=$error)"
     }
 
     /**
