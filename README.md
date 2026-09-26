@@ -4,6 +4,11 @@ A self-hosted password manager with client-side encryption. The client encrypts 
 derived from the master password and stores the resulting blob on a small HTTP server. The server never sees the
 master password or the plaintext. See [SPEC.md](SPEC.md) for the protocol and the file format.
 
+The server does store a password verifier: the *shared secret*, a cheap scrypt hash of the master password with a
+global salt. Anyone who obtains it, or one challenge and token observed on the wire, can test password guesses offline
+much faster than against the encrypted database itself. See [SPEC.md](SPEC.md#shared-secret) and
+[#8](https://github.com/yawkat/password-java/issues/8).
+
 ## Modules
 
 | Module   | Contents                                                                                           |
@@ -49,7 +54,8 @@ server/build/install/server/bin/server -p 8080 -d /var/lib/password
 | `-d`   | `.`     | Data directory            |
 
 Pass `-d` as an absolute path (or leave it at `.`). With a relative path such as `-d data`, the `latest` symlink
-points to the wrong place and the server cannot read back what it stored.
+points to the wrong place and the server cannot read back what it stored
+([#27](https://github.com/yawkat/password-java/issues/27)).
 
 The server speaks plain HTTP. Put a TLS-terminating reverse proxy in front of it. Requests larger than 4 MB are
 rejected with 413.
@@ -60,10 +66,28 @@ The data directory contains:
 |----------------------------------|---------------------------------------------------------------------------|
 | `shared-secret`                  | The client credential, set by the first client that connects (see SPEC.md) |
 | `<timestamp>`, e.g. `2026-09-26T16:54:45.392616657Z` | One encrypted database per upload, named by its ISO-8601 UTC time. Old versions are never deleted. |
-| `latest`                         | Symlink to the newest database file (a copy if symlinks are unavailable)  |
+| `latest`                         | Symlink to the newest database file                                        |
 
 Files are created owner-only (`rw-------`). The server logs a warning at startup if the data directory is accessible
-by other users.
+by other users. The data directory must support symlinks: on a file system without them (FAT, some SMB mounts) every
+upload fails, and `latest` is left deleted.
+
+### Enrollment
+
+A fresh server has no `shared-secret`. The first client that connects sets it, unauthenticated, from the master
+password it was given (see [SPEC.md](SPEC.md#client-behaviour)). This happens when the client first *loads* the
+database, before the desktop app asks you to confirm creating a new one. A mistyped master password therefore claims
+the server permanently, and the correct password is rejected from then on.
+
+Enroll right after deploying, before the port is reachable by others (before setting `openFirewall` or exposing it
+through a proxy): open the desktop app with the new server's URL and your master password, and confirm creating the
+database.
+
+To reset a server, stop it and delete `shared-secret` and `latest` from the data directory. Also delete `latest` in
+each client's `storageDir`, since the client would otherwise fall back to the local copy and fail to decrypt it. The
+next client that connects enrolls again. This is also the only way to change the master password: an existing
+database cannot be re-encrypted, so the new one starts empty. The old timestamped files stay in place, encrypted
+under the old password.
 
 ## Desktop app
 
@@ -80,16 +104,15 @@ storageDir=~/.local/share/password
 | `url`        | `https://pw.yawk.at`                                           | Server base URL, without a trailing slash       |
 | `storageDir` | `$XDG_DATA_HOME/password` (`~/.local/share/password`)          | Local copy of the database. A leading `~` is expanded. |
 
+Set `url` to your own server: the default is the author's. You can also enter the URL on the unlock screen.
+
+Use an absolute path (or `~/...`) for `storageDir`, on a file system with symlinks. A relative path breaks the
+`latest` symlink as it does for the server's `-d` ([#27](https://github.com/yawkat/password-java/issues/27)).
+
 The local copy uses the same layout as the server's data directory (timestamped files plus `latest`). The app writes
 `url` back to the file when you change the server URL in the UI. Other keys are kept, comments are not.
 
 If the server is unreachable, the app opens the local copy and warns before saving changes made offline.
-
-<!-- android: update when #20 lands -->
-## Android
-
-An Android app (`android/` module) is being added in #20. It needs an Android SDK to build; `-Ppassword.android=false`
-leaves it out. It targets minSdk 29 and has the application ID `at.yawk.password.android`.
 
 ## Building with nix
 
@@ -127,13 +150,14 @@ nix flake check -L   # builds everything, runs the Gradle tests and a NixOS VM t
 }
 ```
 
-This runs the server as a hardened systemd service `password-server`. Options under `services.password-server`:
+This runs the server as a hardened systemd service `password-server`. Enroll (see [Enrollment](#enrollment)) before
+setting `openFirewall` or exposing the port. Options under `services.password-server`:
 
 | Option         | Default               | Meaning                                                                   |
 |----------------|-----------------------|---------------------------------------------------------------------------|
 | `enable`       | `false`               | Enable the service                                                        |
 | `port`         | `8080`                | Listen port (all interfaces)                                              |
-| `dataDir`      | `/var/lib/password`   | Data directory. Must be absolute and not below `/home`, `/root` or `/run/user`. |
+| `dataDir`      | `/var/lib/password`   | Data directory. Must be an absolute path without whitespace or `%`, and not below `/home`, `/root` or `/run/user`. |
 | `openFirewall` | `false`               | Open `port` in the firewall                                               |
 | `user`, `group`| `password`            | Service account, created automatically when left at the default          |
 | `package`      | the flake's `server`  | Server package                                                            |
@@ -154,10 +178,11 @@ It installs `password-gui` and a desktop entry.
 ### Updating `nix/deps.json`
 
 The nix build fetches Gradle dependencies from the lockfile `nix/deps.json`. After changing any dependency or Gradle
-plugin, regenerate it from the repository root:
+plugin, regenerate it from the repository root on x86_64-linux:
 
 ```sh
 nix build .#server.mitmCache.updateScript && ./result
 ```
 
-`git add` new files first, since the flake only sees tracked files.
+On other systems the desktop app is not built, so its dependencies would be left out of the lockfile. Stage new
+files first (`git add`), since the flake only sees tracked files.

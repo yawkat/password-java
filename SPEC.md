@@ -24,7 +24,7 @@ The salt is the fixed 16-byte ASCII string above, the same for every user and se
 server stores it verbatim in its data directory as `shared-secret`.
 
 The secret is deliberately short and cheap, but it is still an offline password-guessing oracle, and the global salt
-allows precomputation. Issue #8 tracks these weaknesses.
+allows precomputation. [#8](https://github.com/yawkat/password-java/issues/8) tracks these weaknesses.
 
 ## HTTP protocol
 
@@ -87,9 +87,12 @@ blob.
 ### Server storage
 
 Each `PUT /db` writes a new file in the data directory, named by the current time in ISO-8601 UTC
-(`Instant.toString()`, e.g. `2026-09-26T16:54:45.392616657Z`), and then replaces the symlink `latest` with a link to
-it (or with a copy where symlinks are unavailable). `GET /db` returns the content of `latest`. Old files are never
-deleted. On POSIX file systems, `shared-secret` and the database files are created with mode `0600`.
+(`Instant.toString()`, e.g. `2026-09-26T16:54:45.392616657Z`), then deletes the symlink `latest` and creates it again
+pointing to the new file. `GET /db` returns the content of `latest`. Old files are never deleted. If the symlink
+cannot be created (e.g. on FAT or some SMB mounts), the request fails and `latest` stays deleted, so `GET /db` returns
+404 until a later upload succeeds. With a relative data directory other than `.`, the link target is wrong and the
+link dangles ([#27](https://github.com/yawkat/password-java/issues/27)). The client's local copy uses the same code.
+On POSIX file systems, `shared-secret` and the database files are created with mode `0600`.
 
 ## Encrypted blob
 
@@ -116,8 +119,12 @@ key = scrypt(password, salt, N = 2^expN, r, p, dkLen)
 ```
 
 When writing, the client uses `expN = 16`, `r = 8`, `p = 1`, `dkLen = 32` (AES-256) and a fresh random 32-byte salt
-for every save. When reading, it uses whatever parameters the blob contains, but rejects `expN` outside 1..30, `r`,
-`p` or `dkLen` below 1, and parameters needing more than 1 GiB of scrypt memory (`128 · r · N`).
+for every save. When reading, it uses whatever parameters the blob contains. A blob can only be read if:
+
+- `1 ≤ expN ≤ 30`, `r ≥ 1`, `p ≥ 1`, `dkLen ≥ 1`, and `128 · r · N ≤ 1 GiB` (checked by `ScryptParameters`);
+- `N ≥ 2` and `N < 2^(16·r)`, and `p ≤ (2^31 − 1) / (1024 · r)` (checked by BouncyCastle's scrypt). Given
+  `expN ≤ 30`, the `N` bound only matters for `r = 1`, where it means `expN ≤ 15`;
+- `dkLen` is 16, 24 or 32, since the key is used directly as the AES key (checked by the AES cipher).
 
 The same `key` is used for AES and for the HMAC.
 
@@ -137,8 +144,12 @@ body      = AES/CFB/NoPadding(key, iv).encrypt(mac ‖ json)
 
 To decrypt, the client derives `key` from the header, decrypts `body`, and splits off the first 64 bytes as `mac`. It
 then compares `mac` with `HMAC-SHA512(key, rest)` in constant time and rejects the blob if they differ or if the
-plaintext is shorter than 64 bytes. A wrong password therefore shows up as an HMAC failure. Header fields are not
-authenticated directly, but changing any of them changes the key or the plaintext, so the HMAC check fails.
+plaintext is shorter than 64 bytes. Header fields are not authenticated directly, but changing any of them changes
+the key or the plaintext, so the HMAC check fails.
+
+Decrypting with a wrong password also fails this check. In practice that only happens with the local copy: against
+the server, a wrong password yields a different shared secret, so `GET /db` is rejected with 403 before any blob is
+returned.
 
 ## Decrypted blob (JSON)
 
@@ -164,22 +175,35 @@ authenticated directly, but changing any of them changes the key or the plaintex
 
 ## Client behaviour
 
-Every request to `/db` is preceded by `GET /challenge`. If that returns 404, the client sends its shared secret with
-`PUT /shared-secret` and requests the challenge again, so the first client to use a fresh server registers it.
-
 Non-2xx responses are errors, including redirects that the HTTP client does not follow (e.g. from `http` to
 `https`).
 
 The client keeps a local copy of the encrypted blob in the same layout as the server's data directory (timestamped
 files plus `latest`).
 
+### Enrollment
+
+Every request to `/db` is preceded by `GET /challenge`. If that returns 404, the client sends its raw 8-byte shared
+secret with `PUT /shared-secret` and requests the challenge again. It does this for any URL whose `/challenge`
+returns 404, including a mistyped URL or a misconfigured proxy, which then receives the secret.
+
+Enrollment happens during the first load, before the desktop app asks the user to confirm creating a new database.
+On a fresh server, whatever master password is entered first, including a mistyped one, claims the server
+permanently. There is no protocol to change or reset the secret; the operator has to delete `shared-secret` (and
+`latest`, since the old database cannot be decrypted with a new password) on the server.
+
+A 404 from `PUT /shared-secret` is treated the same as a 404 from `GET /db`: as "no database yet" in the load
+procedure below. So a URL that returns 404 for everything looks like an empty server. If `/challenge` returns 404 again
+after the secret was accepted, the client enrolls again; a 403 there is raised as an error.
+
 ### Load
 
 1. Fetch `GET /db`.
 2. If that fails (network error or any error status):
    - with a local copy, decrypt and verify the local copy and use it, marked as coming from local storage;
-   - without a local copy, a 404 means there is no database yet (the client starts with an empty one); any other
-     error is raised.
+   - without a local copy, a 404 means there is no database yet; any other error is raised. For "no database
+     yet", the desktop app asks the user to repeat the master password (`ConfirmCreate`) and only creates an empty
+     database if both match. Nothing is uploaded until the first modification.
 3. Otherwise decrypt and verify the remote blob.
    - If that fails, fall back to the local copy as above. If there is no local copy, or it also fails, the remote
      error is raised.
