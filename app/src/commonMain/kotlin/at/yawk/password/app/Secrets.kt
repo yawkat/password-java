@@ -16,7 +16,7 @@ import java.text.Collator
  */
 const val PASSWORD_MASK = "••••••••••••"
 
-private const val GENERATOR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_.!@#%+="
+private const val GENERATOR_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 private const val GENERATED_LENGTH = 24
 
 private val random = SecureRandom()

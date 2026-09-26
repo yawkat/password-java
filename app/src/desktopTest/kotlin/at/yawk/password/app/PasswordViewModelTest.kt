@@ -307,6 +307,7 @@ class SecretsTest {
         val generated = withGeneratedPassword("old\nuser")
         assertTrue(generated.endsWith("\nuser"))
         assertEquals(24, generated.indexOf('\n'))
+        assertTrue(generated.substring(0, 24).all { it in 'a'..'z' || it in '0'..'9' })
     }
 
     @Test
