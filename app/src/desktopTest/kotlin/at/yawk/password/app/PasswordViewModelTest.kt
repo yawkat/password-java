@@ -43,14 +43,23 @@ class PasswordViewModelTest {
         server.close()
     }
 
-    private fun newViewModel(): PasswordViewModel {
+    /** Fake clock for the background lock, in milliseconds */
+    @Volatile
+    private var now = 0L
+
+    private fun newViewModel(backgroundLockTimeoutMs: Long = BACKGROUND_LOCK_TIMEOUT_MS): PasswordViewModel {
         val store = ViewModelStore().also { stores += it }
         val factory = viewModelFactory {
             initializer {
-                PasswordViewModel(platform, clientFactory = { url, storage, password ->
-                    passwords += password
-                    PasswordClient(url, storage, password)
-                })
+                PasswordViewModel(
+                    platform,
+                    clientFactory = { url, storage, password ->
+                        passwords += password
+                        PasswordClient(url, storage, password)
+                    },
+                    clock = { now },
+                    backgroundLockTimeoutMs = backgroundLockTimeoutMs,
+                )
             }
         }
         return ViewModelProvider.create(store, factory)[PasswordViewModel::class]
@@ -224,6 +233,64 @@ class PasswordViewModelTest {
         vm.await<UiState.Locked>()
         assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped")
         assertNull(server.db.get())
+    }
+
+    private fun unlockedEmpty(vm: PasswordViewModel) {
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.confirmCreate("secret")
+        vm.await<UiState.Unlocked>()
+    }
+
+    @Test
+    fun shortBackgroundKeepsSession() {
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        vm.onBackground()
+        now += BACKGROUND_LOCK_TIMEOUT_MS - 1
+        vm.onForeground()
+        Thread.sleep(200)
+        assertTrue(vm.state.value is UiState.Unlocked)
+        // still usable
+        assertNotNull(runBlocking { vm.save(null, "a", "1").await() })
+    }
+
+    @Test
+    fun longBackgroundLocksOnReturn() {
+        // e.g. the process was frozen, so the timer didn't run
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        val sessionPassword = passwords.last()
+        vm.onBackground()
+        now += BACKGROUND_LOCK_TIMEOUT_MS
+        vm.onForeground()
+        vm.await<UiState.Locked>()
+        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped")
+    }
+
+    @Test
+    fun backgroundTimerLocks() {
+        val vm = newViewModel(backgroundLockTimeoutMs = 100)
+        unlockedEmpty(vm)
+        vm.onBackground()
+        vm.await<UiState.Locked>()
+        // back in the foreground afterwards: stays locked, nothing else happens
+        vm.onForeground()
+        assertTrue(vm.state.value is UiState.Locked)
+    }
+
+    @Test
+    fun returnCancelsBackgroundTimer() {
+        val vm = newViewModel(backgroundLockTimeoutMs = 300)
+        unlockedEmpty(vm)
+        vm.onBackground()
+        vm.onForeground()
+        Thread.sleep(600)
+        assertTrue(vm.state.value is UiState.Unlocked)
+        // a second absence starts a new timer
+        vm.onBackground()
+        vm.await<UiState.Locked>()
     }
 
     @Test

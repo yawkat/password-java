@@ -1,6 +1,7 @@
 package at.yawk.password.android
 
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,7 +17,10 @@ import at.yawk.password.app.WindowHooks
 class MainActivity : ComponentActivity() {
     private val viewModel: PasswordViewModel by viewModels {
         viewModelFactory {
-            initializer { PasswordViewModel(AndroidPlatform(applicationContext)) }
+            initializer {
+                // elapsedRealtime keeps counting while the device sleeps
+                PasswordViewModel(AndroidPlatform(applicationContext), clock = SystemClock::elapsedRealtime)
+            }
         }
     }
     private val hooks = WindowHooks()
@@ -32,13 +36,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // locks right away if the app was in the background for too long, before anything is drawn
+        viewModel.onForeground()
+    }
+
     override fun onStop() {
         super.onStop()
-        // In the background (other app, home screen, screen off): lock, and forget a typed master password. The
-        // clipboard is left alone, the user probably switched away to paste; it is cleared by its timer.
+        // In the background (other app, home screen, screen off): lock after a timeout (BACKGROUND_LOCK_TIMEOUT_MS),
+        // and forget a typed master password now. The clipboard is left alone, the user probably switched away to
+        // paste; it is cleared by its own timer.
         if (!isChangingConfigurations) {
             hooks.onBackground()
-            viewModel.lockWhenIdle()
+            viewModel.onBackground()
         }
     }
 }

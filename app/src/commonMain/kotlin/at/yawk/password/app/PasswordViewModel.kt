@@ -9,7 +9,9 @@ import at.yawk.password.model.PasswordEntry
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,12 @@ import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger(PasswordViewModel::class.java)
+
+/**
+ * How long the app may stay in the background (Android) before it locks, discarding unsaved edits. Short absences,
+ * e.g. to paste a generated password into a website, keep the database unlocked and the editor as it was.
+ */
+const val BACKGROUND_LOCK_TIMEOUT_MS = 5 * 60 * 1000L
 
 /**
  * Owns the unlocked [PasswordStore] and exposes the app state as [state].
@@ -35,6 +43,9 @@ class PasswordViewModel(
     private val platform: Platform,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clientFactory: (String, LocalStorageProvider, ByteArray) -> PasswordClient = ::PasswordClient,
+    /** Monotonic clock in milliseconds that keeps running while the device sleeps (Android: elapsedRealtime) */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val backgroundLockTimeoutMs: Long = BACKGROUND_LOCK_TIMEOUT_MS,
 ) : ViewModel() {
     // Unlocking (with a placeholder config) while the configuration loads
     private val _state = MutableStateFlow<UiState>(UiState.Unlocking(AppConfig("", "")))
@@ -51,6 +62,10 @@ class PasswordViewModel(
 
     /** Client waiting for [confirmCreate] */
     private var pendingClient: PasswordClient? = null
+
+    /** [clock] time when the app went to the background, or `null` while it is in the foreground */
+    private var backgroundSince: Long? = null
+    private var backgroundLock: Job? = null
 
     init {
         viewModelScope.launch {
@@ -146,8 +161,37 @@ class PasswordViewModel(
     }
 
     /**
+     * The app went to the background: lock after [backgroundLockTimeoutMs], unless it comes back before.
+     */
+    fun onBackground() {
+        if (backgroundSince != null) {
+            return
+        }
+        backgroundSince = clock()
+        backgroundLock = viewModelScope.launch {
+            delay(backgroundLockTimeoutMs)
+            lockWhenIdle()
+        }
+    }
+
+    /**
+     * The app is in the foreground again. If it was away for [backgroundLockTimeoutMs] or longer, lock now: the timer
+     * of [onBackground] may not have run while the process was frozen or the device was asleep. This locks right away
+     * (before anything is drawn) unless an operation is still running.
+     */
+    fun onForeground() {
+        val since = backgroundSince ?: return
+        backgroundSince = null
+        backgroundLock?.cancel()
+        backgroundLock = null
+        if (clock() - since >= backgroundLockTimeoutMs) {
+            lockWhenIdle()
+        }
+    }
+
+    /**
      * Lock as soon as a running operation (unlocking, saving, reloading) has finished, also discarding an offered
-     * database creation. Unlike [lock], this never refuses. Used when the app goes to the background on Android.
+     * database creation. Unlike [lock], this never refuses.
      */
     fun lockWhenIdle() {
         viewModelScope.launch {

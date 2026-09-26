@@ -61,7 +61,7 @@ class WindowHooks {
 
     /**
      * To be called when the app goes to the background (Android). Forgets a master password that was typed but not
-     * submitted; locking is up to the caller ([PasswordViewModel.lockWhenIdle]).
+     * submitted; locking is up to the caller ([PasswordViewModel.onBackground]).
      */
     fun onBackground() {
         backgroundHandler?.invoke()
