@@ -1,5 +1,7 @@
 [versions]
 jackson = "3.2.3"
+# Micronaut 4.x platform BOM, applied to :server by the Micronaut Gradle plugin
+micronaut-platform = "4.10.19"
 lombok = "1.18.48"
 slf4j = "2.0.20"
 # must match the minor version of the system Qt 6 installation (nixpkgs qt6.qtbase)
@@ -13,11 +15,16 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 testng = { module = "org.testng:testng", version = "7.12.0" }
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.86" }
 jopt-simple = { module = "net.sf.jopt-simple:jopt-simple", version = "5.0.4" }
-spark-core = { module = "com.sparkjava:spark-core", version = "2.9.4" }
 expiringmap = { module = "net.jodah:expiringmap", version = "0.5.11" }
+# versions managed by the Micronaut platform BOM
+logback-classic = { module = "ch.qos.logback:logback-classic" }
+micronaut-http-server = { module = "io.micronaut:micronaut-http-server" }
+micronaut-json-core = { module = "io.micronaut:micronaut-json-core" }
 qtjambi = { module = "io.qtjambi:qtjambi", version.ref = "qtjambi" }
 qtjambi-native-linux-x64 = { module = "io.qtjambi:qtjambi-native-linux-x64", version.ref = "qtjambi" }
 
 [plugins]
 lombok = { id = "io.freefair.lombok", version = "9.7.0" }
 shadow = { id = "com.gradleup.shadow", version = "9.6.1" }
+# the minimal variant of io.micronaut.application: same DSL, without the docker/graalvm/aot/test-resources/openrewrite plugins
+micronaut-application = { id = "io.micronaut.minimal.application", version = "4.6.2" }
