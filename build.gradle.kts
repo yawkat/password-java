@@ -1,11 +1,18 @@
 plugins {
     alias(libs.plugins.lombok) apply false
-    alias(libs.plugins.shadow) apply false
     alias(libs.plugins.micronaut.application) apply false
+    alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.compose) apply false
 }
 
 subprojects {
     group = "at.yawk.password"
+
+    // the Kotlin Multiplatform app configures itself
+    if (name == "app") {
+        return@subprojects
+    }
 
     apply(plugin = "java-library")
     apply(plugin = "io.freefair.lombok")
