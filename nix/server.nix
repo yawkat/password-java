@@ -21,5 +21,5 @@ runCommand "password-server-${password-jars.version}"
   }
   ''
     makeWrapper ${lib.getExe jdk25_headless} $out/bin/password-server \
-      --add-flags "-jar ${password-jars}/share/password/server.jar"
+      --add-flags "-cp $(cat ${password-jars}/share/password/classpath) at.yawk.password.server.DatabaseServer"
   ''

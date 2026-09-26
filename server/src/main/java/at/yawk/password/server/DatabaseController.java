@@ -14,10 +14,10 @@ import io.micronaut.scheduling.annotation.ExecuteOn;
 import java.io.IOException;
 
 /**
- * HTTP API of the database server. Request and response bodies are raw bytes; error responses have no body.
+ * HTTP API of the database server. Request and response bodies are raw bytes.
  *
- * <p>{@link AuthFilter} checks the {@code X-Auth-Token} for {@code /db} before the body is read. The checks here only
- * guard against the filter not having run.
+ * <p>Authorization happens in {@link ChallengeTokenFilter} and {@link SharedSecretUnsetFilter}, before the body is
+ * read.
  *
  * @author yawkat
  */
@@ -48,6 +48,7 @@ class DatabaseController {
      * Sets the shared secret. Returns 403 if it is already set.
      */
     @Put(uri = "/shared-secret", consumes = MediaType.ALL)
+    @SharedSecretUnsetFilter.Required
     HttpResponse<?> putSharedSecret(@Nullable @Body byte[] secret) throws IOException {
         return state.setSharedSecretIfUnset(secret == null ? EMPTY : secret) ?
                 HttpResponse.ok() : HttpResponse.status(HttpStatus.FORBIDDEN);
@@ -57,8 +58,9 @@ class DatabaseController {
      * Returns the database, 403 if the token is missing or invalid, or 404 if no database has been saved yet.
      */
     @Get(uri = "/db", produces = MediaType.APPLICATION_OCTET_STREAM)
+    @ChallengeTokenFilter.Required
     HttpResponse<byte[]> getDatabase(HttpRequest<?> request) throws IOException {
-        if (!AuthFilter.isAuthenticated(request)) {
+        if (!ChallengeTokenFilter.isAuthenticated(request)) {
             return HttpResponse.status(HttpStatus.FORBIDDEN);
         }
         byte[] db = state.loadDatabase();
@@ -69,8 +71,9 @@ class DatabaseController {
      * Saves the database. Returns 403 if the token is missing or invalid.
      */
     @Put(uri = "/db", consumes = MediaType.ALL)
+    @ChallengeTokenFilter.Required
     HttpResponse<?> putDatabase(HttpRequest<?> request, @Nullable @Body byte[] db) throws IOException {
-        if (!AuthFilter.isAuthenticated(request)) {
+        if (!ChallengeTokenFilter.isAuthenticated(request)) {
             return HttpResponse.status(HttpStatus.FORBIDDEN);
         }
         state.saveDatabase(db == null ? EMPTY : db);

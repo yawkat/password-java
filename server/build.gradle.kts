@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.micronaut.application)
-    alias(libs.plugins.shadow)
     `java-test-fixtures`
 }
 
@@ -14,6 +13,8 @@ micronaut {
     }
 }
 
+// Deployed as the application plugin's distribution (installDist: lib/*.jar plus start scripts) rather than a fat
+// jar, since Micronaut doesn't support shading well.
 application {
     mainClass = "at.yawk.password.server.DatabaseServer"
 }
@@ -22,23 +23,15 @@ dependencies {
     api(project(":shared"))
     implementation(libs.jopt.simple)
     implementation(libs.expiringmap)
+    // JSON for Micronaut's default error responses
+    runtimeOnly(libs.micronaut.serde.jackson)
     runtimeOnly(libs.logback.classic)
-    // The netty server references io.micronaut.json classes while routing any request, even with no JSON mapper
-    // present. This is only the abstraction, no serde or Jackson.
-    runtimeOnly(libs.micronaut.json.core)
 
     // TestServer, which the server and client tests use to run the real server on a random port
     testFixturesApi(libs.micronaut.http.server)
+    testImplementation(libs.micronaut.http.client)
 }
 
 tasks.withType<JavaCompile>().configureEach {
     options.release = 25
-}
-
-tasks.shadowJar {
-    // Merge META-INF/services files that several jars provide (e.g. Micronaut's TypeConverterRegistrar) instead
-    // of keeping only one. Micronaut 4 bean definitions under META-INF/micronaut/** are one file per bean, so they
-    // don't collide and need no merging.
-    mergeServiceFiles()
-    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
