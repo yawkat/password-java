@@ -9,14 +9,19 @@ import io.micronaut.http.MutableHttpRequest;
 import io.micronaut.http.client.BlockingHttpClient;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -139,15 +144,73 @@ public class DatabaseControllerTest {
     }
 
     /**
+     * {@code HttpURLConnection}, and so {@code DatabaseClient}, sends bodies as
+     * {@code application/x-www-form-urlencoded}. They must be stored as raw bytes, not decoded as form data.
+     */
+    @Test
+    public void testFormContentType() throws Exception {
+        byte[] secret = setSecret();
+        byte[] db = HashUtil.generateRandomBytes(100_000);
+        // the JDK client, because the Micronaut client would form-encode the body
+        try (java.net.http.HttpClient jdkClient = java.net.http.HttpClient.newHttpClient()) {
+            int status = jdkClient.send(
+                    java.net.http.HttpRequest.newBuilder(URI.create(server.getUrl() + "/db"))
+                            .PUT(java.net.http.HttpRequest.BodyPublishers.ofByteArray(db))
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .header("X-Auth-Token", token(secret))
+                            .build(),
+                    java.net.http.HttpResponse.BodyHandlers.discarding()).statusCode();
+            Assert.assertEquals(status, 200);
+        }
+        Assert.assertEquals(getDbBody(token(secret)), db);
+    }
+
+    /**
      * The auth filters only apply to routed requests, so requests that match no route get the usual 404 and 405.
      */
     @Test
-    public void testUnrouted() {
+    public void testUnrouted() throws Exception {
         setSecret();
         Assert.assertEquals(send(HttpRequest.GET("/nonexistent")).getStatus(), HttpStatus.NOT_FOUND);
         Assert.assertEquals(send(HttpRequest.POST("/db", new byte[]{ 1 })).getStatus(), HttpStatus.METHOD_NOT_ALLOWED);
+        Assert.assertEquals(send(HttpRequest.DELETE("/db")).getStatus(), HttpStatus.METHOD_NOT_ALLOWED);
         Assert.assertEquals(send(HttpRequest.POST("/shared-secret", new byte[]{ 1 })).getStatus(),
                             HttpStatus.METHOD_NOT_ALLOWED);
+        // raw paths, which the Micronaut client would normalize or misread
+        Assert.assertEquals(rawStatus("/DB"), 404);
+        Assert.assertEquals(rawStatus("/%64b"), 404);
+        Assert.assertEquals(rawStatus("//db"), 404);
+    }
+
+    private int rawStatus(String path) throws Exception {
+        try (java.net.http.HttpClient jdkClient = java.net.http.HttpClient.newHttpClient()) {
+            return jdkClient.send(java.net.http.HttpRequest.newBuilder(URI.create(server.getUrl() + path)).build(),
+                                  java.net.http.HttpResponse.BodyHandlers.discarding()).statusCode();
+        }
+    }
+
+    /**
+     * Routes that Micronaut also serves under other methods or paths are filtered too.
+     */
+    @Test
+    public void testRouteVariantsAreFiltered() {
+        byte[] secret = setSecret();
+        Assert.assertEquals(put("/db", token(secret), new byte[]{ 1 }), HttpStatus.OK);
+
+        // HEAD is routed to GET /db
+        Assert.assertEquals(send(HttpRequest.HEAD("/db")).getStatus(), HttpStatus.FORBIDDEN);
+        String token = token(secret);
+        Assert.assertEquals(send(HttpRequest.HEAD("/db").header("X-Auth-Token", token)).getStatus(), HttpStatus.OK);
+        Assert.assertEquals(getDb(token), HttpStatus.FORBIDDEN);
+
+        // trailing slashes are routed too
+        Assert.assertEquals(send(HttpRequest.GET("/db/")).getStatus(), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(put("/db/", null, new byte[]{ 2 }), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(put("/shared-secret/", null, new byte[]{ 2 }), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(send(HttpRequest.GET("/db/").header("X-Auth-Token", token(secret))).getStatus(),
+                            HttpStatus.OK);
+
+        Assert.assertEquals(getDbBody(token(secret)), new byte[]{ 1 });
     }
 
     @Test
@@ -157,46 +220,77 @@ public class DatabaseControllerTest {
     }
 
     /**
+     * A lazily generated body of zeros.
+     */
+    private static final class ZeroBody extends InputStream {
+        final long size;
+        long read;
+
+        ZeroBody(long size) {
+            this.size = size;
+        }
+
+        @Override
+        public int read() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            long remaining = size - read;
+            if (remaining <= 0) {
+                return -1;
+            }
+            int n = (int) Math.min(len, remaining);
+            Arrays.fill(b, off, off + n, (byte) 0);
+            read += n;
+            return n;
+        }
+    }
+
+    private static java.net.http.HttpRequest upload(String url, ZeroBody body, boolean expectContinue) {
+        return java.net.http.HttpRequest.newBuilder(URI.create(url))
+                .PUT(java.net.http.HttpRequest.BodyPublishers.fromPublisher(
+                        java.net.http.HttpRequest.BodyPublishers.ofInputStream(() -> body), body.size))
+                .expectContinue(expectContinue)
+                .build();
+    }
+
+    /**
      * Unauthorized uploads are rejected before their body is read, so they can't make the server buffer it.
      *
-     * <p>Uses the JDK client, because it can send {@code Expect: 100-continue} and stream a lazily generated body.
+     * <p>Uses a raw socket and the JDK client, because the Micronaut client can't send a partial body or
+     * {@code Expect: 100-continue}.
      */
     @Test
     public void testUnauthorizedUploads() throws Exception {
         byte[] secret = setSecret();
 
-        // just under the 4MB limit, so that only the auth check can reject it
-        long size = 4_000_000;
-        Supplier<InputStream> zeros = () -> new InputStream() {
-            long remaining = size;
-
-            @Override
-            public int read() {
-                return remaining-- > 0 ? 0 : -1;
+        // Announce a 4MB body but send only the first 64KB: the 403 still arrives, so the server answered without
+        // waiting for (let alone buffering) the body.
+        for (String path : new String[]{ "/db", "/db/", "/shared-secret", "/shared-secret/" }) {
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress("127.0.0.1", URI.create(server.getUrl()).getPort()));
+                socket.setSoTimeout(10_000);
+                OutputStream out = socket.getOutputStream();
+                out.write(("PUT " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4000000\r\n\r\n")
+                                  .getBytes(StandardCharsets.US_ASCII));
+                out.write(new byte[64 * 1024]);
+                out.flush();
+                String statusLine = new BufferedReader(
+                        new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII)).readLine();
+                Assert.assertEquals(statusLine, "HTTP/1.1 403 Forbidden", path);
             }
+        }
 
-            @Override
-            public int read(byte[] b, int off, int len) {
-                if (remaining <= 0) {
-                    return -1;
-                }
-                int n = (int) Math.min(len, remaining);
-                Arrays.fill(b, off, off + n, (byte) 0);
-                remaining -= n;
-                return n;
-            }
-        };
         try (java.net.http.HttpClient jdkClient = java.net.http.HttpClient.newHttpClient()) {
+            // concurrent uploads just under the 4MB limit, so that only the auth check can reject them
             for (boolean expectContinue : new boolean[]{ true, false }) {
                 List<CompletableFuture<java.net.http.HttpResponse<Void>>> responses = new ArrayList<>();
                 for (int i = 0; i < 8; i++) {
                     for (String path : new String[]{ "/db", "/shared-secret" }) {
                         responses.add(jdkClient.sendAsync(
-                                java.net.http.HttpRequest.newBuilder(URI.create(server.getUrl() + path))
-                                        .PUT(java.net.http.HttpRequest.BodyPublishers.fromPublisher(
-                                                java.net.http.HttpRequest.BodyPublishers.ofInputStream(zeros), size))
-                                        .expectContinue(expectContinue)
-                                        .build(),
+                                upload(server.getUrl() + path, new ZeroBody(4_000_000), expectContinue),
                                 java.net.http.HttpResponse.BodyHandlers.discarding()));
                     }
                 }

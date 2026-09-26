@@ -5,10 +5,7 @@ import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.FilterMatcher;
-import io.micronaut.http.annotation.RequestFilter;
 import io.micronaut.http.annotation.ServerFilter;
-import io.micronaut.scheduling.TaskExecutors;
-import io.micronaut.scheduling.annotation.ExecuteOn;
 import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -18,27 +15,23 @@ import java.lang.annotation.Target;
 
 /**
  * Rejects requests to routes annotated with {@link Required} with 403 once the shared secret is set, before their
- * body is read. See {@link ChallengeTokenFilter} for why this is a filter. The controller repeats the check atomically
- * with setting the secret.
+ * body is read. The controller repeats the check atomically with setting the secret.
  *
  * @author yawkat
  */
-@ServerFilter(ServerFilter.MATCH_ALL_PATTERN)
+@ServerFilter(patterns = { "/shared-secret", "/shared-secret/" })
 @SharedSecretUnsetFilter.Required
-class SharedSecretUnsetFilter {
+class SharedSecretUnsetFilter extends RouteAnnotationFilter {
     private final DatabaseState state;
 
     SharedSecretUnsetFilter(DatabaseState state) {
+        super(Required.class);
         this.state = state;
     }
 
-    @RequestFilter
-    @ExecuteOn(TaskExecutors.BLOCKING) // reads the shared secret file
+    @Override
     @Nullable
-    HttpResponse<?> filter(HttpRequest<?> request) throws IOException {
-        if (!ChallengeTokenFilter.appliesTo(request, Required.class)) {
-            return null;
-        }
+    protected HttpResponse<?> filterRoute(HttpRequest<?> request) throws IOException {
         return state.isSharedSecretSet() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
     }
 
