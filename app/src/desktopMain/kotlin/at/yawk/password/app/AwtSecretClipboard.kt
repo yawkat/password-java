@@ -2,7 +2,6 @@ package at.yawk.password.app
 
 import java.awt.Toolkit
 import java.awt.datatransfer.Clipboard
-import java.awt.datatransfer.ClipboardOwner
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.SystemFlavorMap
 import java.awt.datatransfer.Transferable
@@ -18,26 +17,34 @@ private val log = LoggerFactory.getLogger(AwtSecretClipboard::class.java)
 /**
  * Copies secrets to the system clipboard through AWT and removes them again after [clearAfterSeconds], like the old
  * Qt GUI's `ClipboardHelper`. The clipboard is only cleared if it still holds the secret we put there.
+ *
+ * Like the Qt GUI, this compares the contents and ignores ownership: a clipboard manager may take over the
+ * clipboard (and with it the ownership) while keeping our secret in it.
  */
 class AwtSecretClipboard(
     override val clearAfterSeconds: Int = CLEAR_AFTER_SECONDS,
     private val clipboard: () -> Clipboard = { Toolkit.getDefaultToolkit().systemClipboard },
-) : SecretClipboard, ClipboardOwner {
+) : SecretClipboard {
     private val timer = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "clipboard-clear").apply { isDaemon = true }
     }
 
     private var copiedSecret: String? = null
-    private var owner = false
     private var pendingClear: ScheduledFuture<*>? = null
 
     @Synchronized
-    override fun copySecret(text: String) {
-        clipboard().setContents(SecretTransferable(text), this)
+    override fun copySecret(text: String): Boolean {
+        try {
+            clipboard().setContents(SecretTransferable(text), null)
+        } catch (e: IllegalStateException) {
+            // the clipboard is currently unavailable
+            log.warn("Could not copy to clipboard", e)
+            return false
+        }
         copiedSecret = text
-        owner = true
         pendingClear?.cancel(false)
         pendingClear = timer.schedule(::clearIfOurs, clearAfterSeconds.toLong(), TimeUnit.SECONDS)
+        return true
     }
 
     @Synchronized
@@ -46,12 +53,8 @@ class AwtSecretClipboard(
         copiedSecret = null
         pendingClear?.cancel(false)
         pendingClear = null
-        if (!owner) {
-            return
-        }
         try {
             val clipboard = clipboard()
-            // ownership tracking is not reliable on every platform, so compare the contents as well
             val current = clipboard.getContents(null)
             if (current != null &&
                 current.isDataFlavorSupported(DataFlavor.stringFlavor) &&
@@ -62,12 +65,6 @@ class AwtSecretClipboard(
         } catch (e: Exception) {
             log.warn("Could not clear clipboard", e)
         }
-        owner = false
-    }
-
-    @Synchronized
-    override fun lostOwnership(clipboard: Clipboard, contents: Transferable) {
-        owner = false
     }
 
     private class SecretTransferable(private val text: String) : Transferable {

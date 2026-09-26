@@ -5,6 +5,7 @@ import at.yawk.password.MultiFileLocalStorageProvider
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.Properties
 
@@ -45,7 +46,19 @@ class DesktopPlatform(
         properties.setProperty("url", url)
         val file = configFile
         Files.createDirectories(file.parent)
-        Files.newBufferedWriter(file).use { properties.store(it, "password-gui configuration") }
+        // write a temporary file (owner-only, like createTempFile makes it) and move it into place, so a crash
+        // never leaves a truncated configuration behind
+        val temp = Files.createTempFile(file.parent, ".config", ".properties.tmp")
+        try {
+            if (Files.exists(file)) {
+                // keep permissions the user may have chosen
+                Files.setPosixFilePermissions(temp, Files.getPosixFilePermissions(file))
+            }
+            Files.newBufferedWriter(temp).use { properties.store(it, "password-gui configuration") }
+            Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            Files.deleteIfExists(temp)
+        }
     }
 
     override fun openStorage(config: AppConfig): LocalStorageProvider {

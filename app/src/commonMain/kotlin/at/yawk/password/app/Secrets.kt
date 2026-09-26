@@ -1,5 +1,8 @@
 package at.yawk.password.app
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
 import at.yawk.password.client.PasswordStore
 import at.yawk.password.model.PasswordEntry
 import java.nio.CharBuffer
@@ -36,6 +39,15 @@ fun encodePassword(password: CharSequence): ByteArray {
 }
 
 fun ByteArray.wipe() = fill(0)
+
+/**
+ * Empty a field that held a secret. [clearText] alone records an undo step, so Ctrl+Z would bring the secret back.
+ */
+@OptIn(ExperimentalFoundationApi::class) // undoState
+fun TextFieldState.clearSecret() {
+    clearText()
+    undoState.clearHistory()
+}
 
 fun constantTimeEquals(a: ByteArray, b: ByteArray) = MessageDigest.isEqual(a, b)
 

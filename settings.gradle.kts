@@ -4,7 +4,11 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         // Compose Multiplatform depends on androidx artifacts that are only published there
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+            }
+        }
     }
 }
 

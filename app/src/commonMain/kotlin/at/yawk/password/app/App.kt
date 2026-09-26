@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.foundation.text.input.clearText
-import androidx.compose.foundation.text.input.rememberTextFieldState
+
+
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
@@ -79,8 +79,9 @@ fun App(
     val state by viewModel.state.collectAsState()
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         Surface(Modifier.fillMaxSize()) {
-            // the password field is cleared as soon as the view model has taken the password
-            val password = rememberTextFieldState()
+            // Not rememberSaveable, so the password never ends up in saved instance state. The field is cleared (with
+            // its undo history) as soon as the view model has taken the password, and replaced for every session.
+            val password = remember(state is UiState.Unlocked) { TextFieldState() }
             when (val s = state) {
                 is UiState.Locked -> UnlockScreen(s.config, s.error, busy = false, password, viewModel, onExit)
                 is UiState.Unlocking -> UnlockScreen(s.config, null, busy = true, password, viewModel, onExit)
@@ -113,7 +114,7 @@ private fun UnlockScreen(
         if (!busy && password.text.isNotEmpty()) {
             viewModel.unlock(url, password.text)
             // the view model keeps its own (wipeable) copy
-            password.clearText()
+            password.clearSecret()
         }
     }
     LaunchedEffect(busy) {
@@ -167,11 +168,11 @@ private fun UnlockScreen(
 
 @Composable
 private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel) {
-    val repeated = rememberTextFieldState()
+    val repeated = remember { TextFieldState() }
     val focus = remember { FocusRequester() }
     fun create() {
         viewModel.confirmCreate(repeated.text)
-        repeated.clearText()
+        repeated.clearSecret()
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(

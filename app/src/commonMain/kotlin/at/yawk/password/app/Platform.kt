@@ -39,7 +39,10 @@ interface Platform {
 interface SecretClipboard {
     val clearAfterSeconds: Int
 
-    fun copySecret(text: String)
+    /**
+     * @return `false` if the clipboard is unavailable right now (e.g. another application holds it)
+     */
+    fun copySecret(text: String): Boolean
 
     /**
      * Clear the clipboard now if it still holds the last secret we copied. Called on exit.

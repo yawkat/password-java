@@ -36,7 +36,24 @@ sealed interface UiState {
         val offlineSaveConfirmed: Boolean = false,
         val status: StatusMessage? = null,
         val error: ErrorMessage? = null,
-    ) : UiState
+    ) : UiState {
+        // The entry list is compared by identity: an equal list of other entry objects (e.g. after a reload) is a
+        // different state, because the store only accepts its own objects. StateFlow would otherwise drop the update.
+        override fun equals(other: Any?) = other is Unlocked &&
+            entries === other.entries &&
+            fromLocalStorage == other.fromLocalStorage &&
+            busy == other.busy &&
+            offlineSaveConfirmed == other.offlineSaveConfirmed &&
+            status == other.status &&
+            error == other.error
+
+        override fun hashCode() = System.identityHashCode(entries)
+
+        // never print entries: Lombok's PasswordEntry.toString includes the value
+        override fun toString() =
+            "Unlocked(entries=${entries.size}, fromLocalStorage=$fromLocalStorage, busy=$busy, " +
+                "offlineSaveConfirmed=$offlineSaveConfirmed, status=$status, error=$error)"
+    }
 
     /**
      * Unrecoverable error, e.g. unreadable configuration.

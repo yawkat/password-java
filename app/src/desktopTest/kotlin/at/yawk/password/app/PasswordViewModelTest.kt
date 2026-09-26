@@ -207,6 +207,48 @@ class PasswordViewModelTest {
     }
 
     @Test
+    fun reloadedEntriesReachTheState() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.confirmCreate("secret")
+        vm.await<UiState.Unlocked>()
+        val a = runBlocking { vm.save(null, "a", "1").await() }!!
+
+        // the reload returns equal entries, but new objects; only those are accepted by the store
+        assertTrue(runBlocking { vm.reload().await() })
+        val reloaded = vm.awaitIdle().entries.single()
+        assertEquals(a, reloaded)
+        assertTrue(a !== reloaded)
+        assertNotNull(runBlocking { vm.save(reloaded, "a", "2").await() })
+        assertNull(vm.awaitIdle().error)
+    }
+
+    @Test
+    fun urlIsNotSavedWhenUnlockFails() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        // nothing listens on port 1 and there is no local copy
+        vm.unlock("http://127.0.0.1:1", "secret")
+        assertTrue(vm.await<UiState.Locked>().error!!.startsWith("Could not load the database"))
+        assertEquals(listOf(), platform.savedUrls)
+    }
+
+    @Test
+    fun urlSaveFailureDoesNotFailUnlock() {
+        createDatabase("secret", "entry" to "pw")
+        platform.config = platform.config.copy(url = "http://127.0.0.1:1")
+        platform.saveError = java.io.IOException("read-only")
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        val unlocked = vm.await<UiState.Unlocked>()
+        assertEquals(listOf("entry"), unlocked.entries.map { it.name })
+        assertEquals("Could not save the server URL: read-only", unlocked.status?.text)
+    }
+
+    @Test
     fun configError() {
         platform.configError = IllegalStateException("broken")
         val vm = newViewModel()
@@ -232,6 +274,7 @@ class PasswordViewModelTest {
 
     private class FakePlatform(var config: AppConfig, var storage: LocalStorageProvider) : Platform {
         var configError: Exception? = null
+        var saveError: Exception? = null
         val savedUrls = mutableListOf<String>()
 
         override fun loadConfig(): AppConfig {
@@ -240,6 +283,7 @@ class PasswordViewModelTest {
         }
 
         override fun saveUrl(url: String) {
+            saveError?.let { throw it }
             savedUrls += url
             config = config.copy(url = url)
         }

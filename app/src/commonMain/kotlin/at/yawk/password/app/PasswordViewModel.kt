@@ -46,6 +46,9 @@ class PasswordViewModel(
     private var config: AppConfig? = null
     private var store: PasswordStore? = null
     private var password: ByteArray? = null
+    /** Status to show instead of the usual one once unlocked, because saving the server URL failed */
+    private var urlSaveError: String? = null
+
     /** Client waiting for [confirmCreate] */
     private var pendingClient: PasswordClient? = null
 
@@ -76,14 +79,13 @@ class PasswordViewModel(
             mutex.withLock {
                 try {
                     val (client, opened) = withContext(ioDispatcher) {
-                        if (config.url != locked.config.url) {
-                            platform.saveUrl(config.url)
-                        }
                         val client = clientFactory(config.url, platform.openStorage(config), bytes)
                         client to PasswordStore.open(client)
                     }
                     this@PasswordViewModel.password = bytes
                     this@PasswordViewModel.config = config
+                    // only remember a URL that worked, and don't let a failure to do so fail the unlock
+                    urlSaveError = if (config.url != locked.config.url) saveUrl(config.url) else null
                     if (opened == null) {
                         pendingClient = client
                         _state.value = UiState.ConfirmCreate(config)
@@ -143,13 +145,22 @@ class PasswordViewModel(
         }
     }
 
+    private suspend fun saveUrl(url: String): String? = try {
+        withContext(ioDispatcher) { platform.saveUrl(url) }
+        null
+    } catch (e: Exception) {
+        log.warn("Could not save the server URL", e)
+        "Could not save the server URL: ${e.message ?: e}"
+    }
+
     private fun showUnlocked(store: PasswordStore, status: String) {
         this.store = store
         _state.value = UiState.Unlocked(
             entries = store.entries,
             fromLocalStorage = store.isFromLocalStorage,
-            status = StatusMessage(status),
+            status = StatusMessage(urlSaveError ?: status),
         )
+        urlSaveError = null
     }
 
     /**

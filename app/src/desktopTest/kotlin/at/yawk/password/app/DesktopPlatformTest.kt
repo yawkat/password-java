@@ -56,6 +56,25 @@ class DesktopPlatformTest {
     }
 
     @Test
+    fun saveIsAtomicAndKeepsPermissions() {
+        val env = mapOf("XDG_CONFIG_HOME" to "$dir/config")
+        val platform = DesktopPlatform(env::get, home = "$dir/home")
+        val configDir = dir.resolve("config/password-gui")
+
+        // new file: owner-only
+        platform.saveUrl("http://a.example.com")
+        val file = configDir.resolve("config.properties")
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)))
+
+        // existing file: its permissions are kept
+        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-r--r--"))
+        platform.saveUrl("http://b.example.com")
+        assertEquals("rw-r--r--", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)))
+        assertEquals("http://b.example.com", platform.loadConfig().url)
+        assertEquals(listOf("config.properties"), Files.list(configDir).use { s -> s.map { it.fileName.toString() }.toList() })
+    }
+
+    @Test
     fun storageDirectoryIsCreatedPrivate() {
         val platform = DesktopPlatform({ null }, home = "$dir/home")
         val storageDir = dir.resolve("data/password")

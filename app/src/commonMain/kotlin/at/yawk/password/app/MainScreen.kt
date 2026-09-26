@@ -43,6 +43,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,7 +71,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import at.yawk.password.client.PasswordStore
 import at.yawk.password.model.PasswordEntry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -100,24 +100,26 @@ fun MainScreen(
     val nameFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
 
-    val visible = remember(state.entries, ui.query.text) { filterEntries(state.entries, ui.query.text) }
-    val current = ui.current(visible)
+    // Event handlers read the latest state through this instead of values captured at the last composition, which
+    // may be outdated when several events arrive before the next recomposition.
+    val latest by rememberUpdatedState(state)
+    fun entries() = latest.entries
+    fun currentNow() = ui.current(entries())
+    fun idleNow() = !latest.busy && !ui.editing
+
+    // not remembered: PasswordEntry has value equality, so a cache keyed on the entry list could keep returning the
+    // objects of an older, equal list, which the store no longer accepts
+    val visible = ui.visible(state.entries)
+    val current = ui.current(state.entries)
     val busy = state.busy
     val editing = ui.editing
     val idle = !busy && !editing
 
     // ---- actions ----
 
-    fun copy(full: Boolean) {
-        val entry = current ?: return
-        if (editing) return
-        if (full) {
-            clipboard.copySecret(entry.value.orEmpty())
-            viewModel.showStatus("Copied full entry “${entry.name}” (cleared in ${clipboard.clearAfterSeconds}s)")
-        } else {
-            clipboard.copySecret(PasswordStore.firstLine(entry.value))
-            viewModel.showStatus("Copied password of “${entry.name}” (cleared in ${clipboard.clearAfterSeconds}s)")
-        }
+    fun copy(entry: PasswordEntry?, full: Boolean) {
+        if (entry == null || ui.editing) return
+        viewModel.showStatus(copyEntry(clipboard, entry, full))
     }
 
     fun focusSearch() {
@@ -126,17 +128,17 @@ fun MainScreen(
     }
 
     fun newEntry() {
-        if (!idle) return
+        if (!idleNow()) return
         ui.startEditing(null)
     }
 
     fun editEntry() {
-        if (!idle) return
-        ui.startEditing(current ?: return)
+        if (!idleNow()) return
+        ui.startEditing(currentNow() ?: return)
     }
 
     fun withOfflineConfirmation(action: () -> Unit) {
-        if (state.fromLocalStorage && !state.offlineSaveConfirmed) {
+        if (latest.fromLocalStorage && !latest.offlineSaveConfirmed) {
             ui.dialog = MainDialog.ConfirmOfflineSave {
                 viewModel.confirmOfflineSave()
                 action()
@@ -147,7 +149,7 @@ fun MainScreen(
     }
 
     fun save() {
-        if (!editing || busy) return
+        if (!ui.editing || latest.busy) return
         val name = ui.draftName.text.trim()
         val value = ui.draftValue
         if (name.isEmpty()) {
@@ -170,7 +172,7 @@ fun MainScreen(
     }
 
     fun cancelEditing() {
-        if (!editing || busy) return
+        if (!ui.editing || latest.busy) return
         val cancel: () -> Unit = {
             ui.stopEditing()
             listFocus.requestFocus()
@@ -179,37 +181,37 @@ fun MainScreen(
     }
 
     fun deleteEntry() {
-        val entry = current ?: return
-        if (!idle) return
+        val entry = currentNow() ?: return
+        if (!idleNow()) return
         ui.dialog = MainDialog.ConfirmDelete(entry)
     }
 
     fun doDelete(entry: PasswordEntry) {
         withOfflineConfirmation {
-            val row = visible.indexOfFirst { it === entry }
+            val before = entries()
             scope.launch {
                 if (viewModel.delete(entry).await()) {
                     // keep the selection at the same row
-                    val remaining = visible.filter { it !== entry }
-                    ui.selected = remaining.getOrNull(minOf(row, remaining.size - 1))
+                    val after = (viewModel.state.value as? UiState.Unlocked)?.entries ?: return@launch
+                    ui.selectAfterDelete(before, after, entry)
                 }
             }
         }
     }
 
     fun reload() {
-        if (!idle) return
-        val previousName = current?.name
+        if (!idleNow()) return
+        val previousName = currentNow()?.name
         scope.launch {
             if (viewModel.reload().await()) {
-                ui.selected = viewModel.state.value.let { it as? UiState.Unlocked }
-                    ?.entries?.firstOrNull { it.name == previousName }
+                val reloaded = (viewModel.state.value as? UiState.Unlocked)?.entries ?: return@launch
+                ui.reselectByName(reloaded, previousName)
             }
         }
     }
 
     fun lock() {
-        if (!idle) return
+        if (!idleNow()) return
         clipboard.clearIfOurs()
         viewModel.lock()
     }
@@ -246,7 +248,7 @@ fun MainScreen(
 
     // window-wide shortcuts, as in the Qt GUI
     val shortcuts: (KeyEvent) -> Boolean = shortcuts@{ event ->
-        if (event.type != KeyEventType.KeyDown || ui.dialog != null || state.error != null) {
+        if (event.type != KeyEventType.KeyDown || ui.dialog != null || latest.error != null) {
             return@shortcuts false
         }
         val ctrl = event.isCtrlPressed
@@ -254,13 +256,13 @@ fun MainScreen(
         when {
             ctrl && !shift && event.key == Key.N -> newEntry().let { true }
             (ctrl && !shift && event.key == Key.E) || event.key == Key.F2 -> editEntry().let { true }
-            ctrl && shift && event.key == Key.C && !editing -> copy(full = true).let { true }
-            ctrl && !shift && event.key == Key.R && !editing -> { ui.revealed = !ui.revealed; true }
+            ctrl && shift && event.key == Key.C && !ui.editing -> copy(currentNow(), full = true).let { true }
+            ctrl && !shift && event.key == Key.R && !ui.editing -> { ui.revealed = !ui.revealed; true }
             event.key == Key.F5 -> reload().let { true }
-            ctrl && !shift && event.key == Key.S && editing -> save().let { true }
-            !ctrl && event.key == Key.Escape && editing -> cancelEditing().let { true }
-            ctrl && !shift && event.key == Key.F && !editing -> focusSearch().let { true }
-            ctrl && !shift && event.key == Key.L && idle -> lock().let { true }
+            ctrl && !shift && event.key == Key.S && ui.editing -> save().let { true }
+            !ctrl && event.key == Key.Escape && ui.editing -> cancelEditing().let { true }
+            ctrl && !shift && event.key == Key.F && !ui.editing -> focusSearch().let { true }
+            ctrl && !shift && event.key == Key.L -> lock().let { true }
             else -> false
         }
     }
@@ -277,8 +279,8 @@ fun MainScreen(
             onNew = ::newEntry,
             onEdit = ::editEntry,
             onDelete = ::deleteEntry,
-            onCopy = { copy(full = false) },
-            onCopyAll = { copy(full = true) },
+            onCopy = { copy(currentNow(), full = false) },
+            onCopyAll = { copy(currentNow(), full = true) },
             onReveal = { ui.revealed = !ui.revealed },
             onReload = ::reload,
             onLock = ::lock,
@@ -301,11 +303,11 @@ fun MainScreen(
                     modifier = Modifier.fillMaxWidth().focusRequester(searchFocus).onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (event.key) {
-                            Key.DirectionUp -> ui.moveSelection(visible, -1).let { true }
-                            Key.DirectionDown -> ui.moveSelection(visible, 1).let { true }
-                            Key.PageUp -> ui.moveSelection(visible, -PAGE_SIZE).let { true }
-                            Key.PageDown -> ui.moveSelection(visible, PAGE_SIZE).let { true }
-                            Key.Enter, Key.NumPadEnter -> copy(full = false).let { true }
+                            Key.DirectionUp -> ui.moveSelection(entries(), -1).let { true }
+                            Key.DirectionDown -> ui.moveSelection(entries(), 1).let { true }
+                            Key.PageUp -> ui.moveSelection(entries(), -PAGE_SIZE).let { true }
+                            Key.PageDown -> ui.moveSelection(entries(), PAGE_SIZE).let { true }
+                            Key.Enter, Key.NumPadEnter -> copy(currentNow(), full = false).let { true }
                             Key.Escape -> if (ui.query.text.isNotEmpty()) {
                                 ui.query = TextFieldValue("")
                                 true
@@ -314,7 +316,7 @@ fun MainScreen(
                             }
                             // don't claim Ctrl+C without a selection, copy the selected password instead
                             Key.C -> if (event.isCtrlPressed && !event.isShiftPressed && ui.query.selection.collapsed) {
-                                copy(full = false)
+                                copy(currentNow(), full = false)
                                 true
                             } else {
                                 false
@@ -330,16 +332,16 @@ fun MainScreen(
                     enabled = idle,
                     listState = listState,
                     onSelect = {
-                        ui.selected = it
+                        ui.select(it)
                         listFocus.requestFocus()
                     },
                     onActivate = {
-                        ui.selected = it
-                        copy(full = false)
+                        ui.select(it)
+                        copy(it, full = false)
                     },
-                    onCopy = { copy(full = false) },
+                    onCopy = { copy(it, full = false) },
                     modifier = Modifier.weight(1f).fillMaxWidth().focusRequester(listFocus).onKeyEvent { event ->
-                        listKey(event, ui, visible, ::copy, ::deleteEntry, searchFocus)
+                        listKey(event, ui, entries(), { copy(currentNow(), it) }, ::deleteEntry, searchFocus)
                     },
                 )
             }
@@ -413,27 +415,27 @@ fun MainScreen(
 private fun listKey(
     event: KeyEvent,
     ui: MainScreenState,
-    visible: List<PasswordEntry>,
+    entries: List<PasswordEntry>,
     copy: (Boolean) -> Unit,
     delete: () -> Unit,
     searchFocus: FocusRequester,
 ): Boolean {
-    if (event.type != KeyEventType.KeyDown) return false
+    // the list is inert while an entry is edited
+    if (event.type != KeyEventType.KeyDown || ui.editing) return false
+    val visible = ui.visible(entries)
     val commandModifier = event.isCtrlPressed || event.isAltPressed || event.isMetaPressed
     return when {
-        event.key == Key.DirectionUp -> ui.moveSelection(visible, -1).let { true }
-        event.key == Key.DirectionDown -> ui.moveSelection(visible, 1).let { true }
-        event.key == Key.PageUp -> ui.moveSelection(visible, -PAGE_SIZE).let { true }
-        event.key == Key.PageDown -> ui.moveSelection(visible, PAGE_SIZE).let { true }
-        event.key == Key.MoveHome -> ui.moveSelection(visible, -visible.size).let { true }
-        event.key == Key.MoveEnd -> ui.moveSelection(visible, visible.size).let { true }
+        event.key == Key.DirectionUp -> ui.moveSelection(entries, -1).let { true }
+        event.key == Key.DirectionDown -> ui.moveSelection(entries, 1).let { true }
+        event.key == Key.PageUp -> ui.moveSelection(entries, -PAGE_SIZE).let { true }
+        event.key == Key.PageDown -> ui.moveSelection(entries, PAGE_SIZE).let { true }
+        event.key == Key.MoveHome -> ui.moveSelection(entries, -visible.size).let { true }
+        event.key == Key.MoveEnd -> ui.moveSelection(entries, visible.size).let { true }
         event.key == Key.Enter || event.key == Key.NumPadEnter -> copy(false).let { true }
         event.key == Key.Delete && !commandModifier -> delete().let { true }
         event.key == Key.C && event.isCtrlPressed && !event.isShiftPressed -> copy(false).let { true }
-        !commandModifier && isPrintable(event.utf16CodePoint) -> {
-            // typing in the list starts a search
-            val text = ui.query.text + String(Character.toChars(event.utf16CodePoint))
-            ui.query = TextFieldValue(text, TextRange(text.length))
+        // typing in the list starts a search
+        !commandModifier && isPrintable(event.utf16CodePoint) && ui.typeToSearch(event.utf16CodePoint) -> {
             searchFocus.requestFocus()
             true
         }
@@ -540,7 +542,7 @@ private fun EntryList(
     listState: androidx.compose.foundation.lazy.LazyListState,
     onSelect: (PasswordEntry) -> Unit,
     onActivate: (PasswordEntry) -> Unit,
-    onCopy: () -> Unit,
+    onCopy: (PasswordEntry) -> Unit,
     modifier: Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -586,7 +588,7 @@ private fun EntryList(
                         modifier = Modifier.weight(1f).padding(vertical = 6.dp),
                     )
                     if (isCurrent) {
-                        TextButton(onClick = onCopy, enabled = enabled) { Text("Copy") }
+                        TextButton(onClick = { onCopy(entry) }, enabled = enabled) { Text("Copy") }
                     }
                 }
             }
