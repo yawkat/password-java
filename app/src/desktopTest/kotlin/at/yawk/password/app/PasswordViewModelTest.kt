@@ -277,6 +277,20 @@ class PasswordViewModelTest {
     }
 
     @Test
+    fun screenStateLivesPerSession() {
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        // an edit in progress stays with the view model (e.g. across activity recreation)...
+        vm.screenState.startEditing(null)
+        vm.screenState.draftValue = "draft"
+        assertEquals("draft", vm.screenState.draftValue)
+        // ...but not beyond the session
+        vm.lockNow()
+        assertFalse(vm.screenState.editing)
+        assertEquals("", vm.screenState.draftValue)
+    }
+
+    @Test
     fun shortBackgroundKeepsSession() {
         val vm = newViewModel()
         unlockedEmpty(vm)

@@ -64,6 +64,14 @@ class PasswordViewModel(
     private var pendingClient: PasswordClient? = null
 
     /**
+     * UI state of the unlocked screen, including an entry being edited. It is kept here rather than in the
+     * composition, so that recreating the activity (Android) can't lose unsaved edits, and is replaced for every
+     * session, so nothing of it outlives a lock.
+     */
+    var screenState = MainScreenState()
+        private set
+
+    /**
      * Incremented by [lockNow]. An operation that was started in an earlier session discards its result.
      */
     private var session = 0L
@@ -212,6 +220,7 @@ class PasswordViewModel(
         }
         session++
         store = null
+        screenState = MainScreenState()
         pendingClient = null
         val password = password
         this.password = null
@@ -238,6 +247,7 @@ class PasswordViewModel(
 
     private fun showUnlocked(store: PasswordStore, status: String) {
         this.store = store
+        screenState = MainScreenState()
         _state.value = UiState.Unlocked(
             entries = store.entries,
             fromLocalStorage = store.isFromLocalStorage,

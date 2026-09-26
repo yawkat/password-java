@@ -12,10 +12,11 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.Password">
-        <!-- Compose handles configuration changes itself; recreating the activity would lose unsaved edits -->
+        <!-- Compose handles configuration changes itself, without the flicker of recreating the activity (which
+             keeps unsaved edits too: they are in the view model) -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|locale|layoutDirection"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|fontWeightAdjustment|locale|layoutDirection|colorMode|mcc|mnc|touchscreen|grammaticalGender"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

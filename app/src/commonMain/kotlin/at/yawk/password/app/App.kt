@@ -116,8 +116,7 @@ fun App(
                         CreateDatabaseDialog(s.config, viewModel, hooks)
                     }
                     is UiState.Unlocked -> {
-                        val mainState = remember { MainScreenState() }
-                        MainScreen(s, mainState, viewModel, clipboard, hooks, touchInput)
+                        MainScreen(s, viewModel.screenState, viewModel, clipboard, hooks, touchInput)
                     }
                     is UiState.Error -> ErrorScreen(s.message, onExit)
                 }
