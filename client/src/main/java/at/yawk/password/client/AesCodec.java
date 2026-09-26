@@ -1,11 +1,11 @@
 package at.yawk.password.client;
 
 import at.yawk.password.HashUtil;
-import at.yawk.password.PlatformDependent;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.EncryptedBlob;
 import at.yawk.password.model.ScryptParameters;
 import tools.jackson.databind.ObjectMapper;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -51,33 +51,43 @@ class AesCodec {
     public static DecryptedBlob decrypt(ObjectMapper objectMapper, byte[] password, EncryptedBlob msg)
             throws Exception {
         byte[] key = msg.getParameters().runScrypt(password);
-        Cipher decryptCipher = Cipher.getInstance("AES/CFB/NoPadding");
-        decryptCipher.init(
-                Cipher.DECRYPT_MODE,
-                new SecretKeySpec(key, "AES"),
-                new IvParameterSpec(msg.getIv())
-        );
-        byte[] dec = decryptCipher.doFinal(msg.getBody());
+        byte[] dec = null;
+        byte[] actualMac = null;
+        try {
+            Cipher decryptCipher = Cipher.getInstance("AES/CFB/NoPadding");
+            decryptCipher.init(
+                    Cipher.DECRYPT_MODE,
+                    new SecretKeySpec(key, "AES"),
+                    new IvParameterSpec(msg.getIv())
+            );
+            dec = decryptCipher.doFinal(msg.getBody());
+            if (dec.length < HMAC_LENGTH) {
+                throw new Exception("Invalid ciphertext: too short");
+            }
 
-        Mac mac = Mac.getInstance("HmacSHA512");
-        mac.init(new SecretKeySpec(key, "HmacSHA512"));
-        // use content
-        mac.update(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
-        byte[] expectedMac = mac.doFinal();
+            Mac mac = Mac.getInstance("HmacSHA512");
+            mac.init(new SecretKeySpec(key, "HmacSHA512"));
+            // use content
+            mac.update(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
+            byte[] expectedMac = mac.doFinal();
 
-        for (int i = 0; i < HMAC_LENGTH; i++) {
-            if (dec[i] != expectedMac[i]) {
-                throw new Exception(
-                        "Invalid HMAC: expected " +
-                        PlatformDependent.printHexBinary(expectedMac) +
-                        " but was " +
-                        PlatformDependent.printHexBinary(Arrays.copyOf(dec, HMAC_LENGTH))
-                );
+            // do not include any decrypted bytes in the message, they may contain plaintext
+            actualMac = Arrays.copyOf(dec, HMAC_LENGTH);
+            if (!MessageDigest.isEqual(actualMac, expectedMac)) {
+                throw new Exception("Invalid HMAC");
+            }
+
+            return objectMapper.reader()
+                    .forType(DecryptedBlob.class)
+                    .readValue(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
+        } finally {
+            Arrays.fill(key, (byte) 0);
+            if (dec != null) {
+                Arrays.fill(dec, (byte) 0);
+            }
+            if (actualMac != null) {
+                Arrays.fill(actualMac, (byte) 0);
             }
         }
-
-        return objectMapper.reader()
-                .forType(DecryptedBlob.class)
-                .readValue(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
     }
 }

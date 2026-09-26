@@ -31,4 +31,57 @@ public class AesCodecTest {
 
         Assert.assertEquals(startBlob, decrypted);
     }
+
+    @Test
+    public void testTamperedMessageDoesNotLeakPlaintext() throws Exception {
+        ObjectMapper om = new ObjectMapper();
+        byte[] password = HashUtil.generateRandomBytes(100);
+
+        DecryptedBlob startBlob = new DecryptedBlob();
+        startBlob.setData(new PasswordBlob());
+
+        EncryptedBlob encrypted = AesCodec.encrypt(om, password, startBlob);
+        // flip a bit in the HMAC section
+        encrypted.getBody()[0] ^= 1;
+
+        try {
+            AesCodec.decrypt(om, password, encrypted);
+            Assert.fail("Expected HMAC failure");
+        } catch (Exception e) {
+            Assert.assertEquals(e.getMessage(), "Invalid HMAC");
+        }
+    }
+
+    @Test
+    public void testShortBody() throws Exception {
+        ObjectMapper om = new ObjectMapper();
+        byte[] password = HashUtil.generateRandomBytes(100);
+
+        EncryptedBlob encrypted = AesCodec.encrypt(om, password, new DecryptedBlob());
+        encrypted.setBody(new byte[10]);
+
+        try {
+            AesCodec.decrypt(om, password, encrypted);
+            Assert.fail("Expected decryption failure");
+        } catch (Exception e) {
+            // testng: assertEquals(actual, expected)
+            Assert.assertEquals(e.getMessage(), "Invalid ciphertext: too short");
+        }
+    }
+
+    @Test
+    public void testWrongPassword() throws Exception {
+        ObjectMapper om = new ObjectMapper();
+        DecryptedBlob startBlob = new DecryptedBlob();
+        startBlob.setData(new PasswordBlob());
+
+        EncryptedBlob encrypted = AesCodec.encrypt(om, HashUtil.generateRandomBytes(100), startBlob);
+
+        try {
+            AesCodec.decrypt(om, HashUtil.generateRandomBytes(100), encrypted);
+            Assert.fail("Expected HMAC failure");
+        } catch (Exception e) {
+            Assert.assertEquals(e.getMessage(), "Invalid HMAC");
+        }
+    }
 }
