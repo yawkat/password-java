@@ -14,13 +14,23 @@ class AndroidSecretClipboardTest {
         var readable = true
         var failWrites = false
 
+        fun copyByOtherApp(text: String) {
+            this.text = text
+            sensitive = false
+            ours = false
+        }
+
         override fun setSensitive(text: String) {
             if (failWrites) throw SecurityException("denied")
             this.text = text
             sensitive = true
+            ours = true
         }
 
-        override fun readText() = if (readable) text else null
+        /** Whether [text] was copied by us */
+        var ours = false
+
+        override fun holdsOurClip() = if (readable && text != null) ours else null
 
         override fun clear() {
             text = null
@@ -62,7 +72,7 @@ class AndroidSecretClipboardTest {
     @Test
     fun keepsOtherContentsWhileReadable() {
         secretClipboard.copySecret("secret")
-        clipboard.text = "something else"
+        clipboard.copyByOtherApp("something else")
         scheduler.runAll()
         assertEquals("something else", clipboard.text)
     }
@@ -92,7 +102,7 @@ class AndroidSecretClipboardTest {
         assertNull(clipboard.text)
         assertNull(scheduler.pending)
         // nothing of ours left: later contents stay
-        clipboard.text = "other"
+        clipboard.copyByOtherApp("other")
         clipboard.readable = false
         secretClipboard.clearIfOurs()
         assertEquals("other", clipboard.text)
@@ -107,14 +117,18 @@ class AndroidSecretClipboardTest {
 
     @Test
     fun timerAfterProcessRestart() {
-        // a new process gets the alarm of the old one: clear what can't be checked, keep what can
-        val restarted = AndroidSecretClipboard(clipboard, scheduler)
-        clipboard.text = "secret"
-        clipboard.readable = true
-        restarted.onTimer()
-        assertEquals("secret", clipboard.text)
+        // A new process gets the alarm of the old one, and doesn't know what was copied. Our copy is recognized
+        // anyway (by its description), also while the app has the focus.
+        secretClipboard.copySecret("secret")
+        AndroidSecretClipboard(clipboard, scheduler).onTimer()
+        assertNull(clipboard.text)
+
+        // someone else's copy stays, if it can be seen
+        clipboard.copyByOtherApp("other")
+        AndroidSecretClipboard(clipboard, scheduler).onTimer()
+        assertEquals("other", clipboard.text)
         clipboard.readable = false
-        restarted.onTimer()
+        AndroidSecretClipboard(clipboard, scheduler).onTimer()
         assertNull(clipboard.text)
     }
 }
