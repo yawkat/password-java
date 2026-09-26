@@ -22,6 +22,13 @@ class DatabaseClient {
     private final byte[] sharedSecret;
 
     /**
+     * Without timeouts, a half-open connection (e.g. after switching networks) would block forever, and with it the
+     * operation holding the unlocked database.
+     */
+    int connectTimeoutMillis = 15_000;
+    int readTimeoutMillis = 60_000;
+
+    /**
      * Load the database, preferring the remote copy and falling back to the local copy if the remote is unreachable
      * or fails verification.
      *
@@ -105,6 +112,8 @@ class DatabaseClient {
 
         URL url = new URL(this.url + path);
         URLConnection connection = url.openConnection();
+        connection.setConnectTimeout(connectTimeoutMillis);
+        connection.setReadTimeout(readTimeoutMillis);
         ((HttpURLConnection) connection).setRequestMethod(method);
         if (token != null) {
             connection.setRequestProperty("X-Auth-Token", PlatformDependent.printHexBinary(token));
