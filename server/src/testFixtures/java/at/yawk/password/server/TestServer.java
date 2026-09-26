@@ -24,10 +24,21 @@ public final class TestServer implements AutoCloseable {
 
     public static TestServer start() throws IOException {
         Path dataDirectory = Files.createTempDirectory("password-server");
-        EmbeddedServer server = ApplicationContext.run(EmbeddedServer.class, Map.of(
-                "micronaut.server.port", -1,
-                "password.data-dir", dataDirectory.toString()
-        ));
+        EmbeddedServer server;
+        try {
+            server = ApplicationContext.run(EmbeddedServer.class, Map.of(
+                    "micronaut.server.host", "127.0.0.1",
+                    "micronaut.server.port", -1,
+                    DatabaseState.DATA_DIR_PROPERTY, dataDirectory.toString()
+            ));
+        } catch (RuntimeException e) {
+            try {
+                deleteRecursively(dataDirectory);
+            } catch (IOException | RuntimeException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
         return new TestServer(dataDirectory, server);
     }
 
@@ -38,12 +49,18 @@ public final class TestServer implements AutoCloseable {
     @Override
     public void close() {
         server.getApplicationContext().close();
-        try (Stream<Path> files = Files.walk(dataDirectory)) {
+        try {
+            deleteRecursively(dataDirectory);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void deleteRecursively(Path directory) throws IOException {
+        try (Stream<Path> files = Files.walk(directory)) {
             for (Path file : files.sorted(Comparator.reverseOrder()).toList()) {
                 Files.delete(file);
             }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
     }
 }

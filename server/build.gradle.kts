@@ -27,7 +27,7 @@ dependencies {
     // present. This is only the abstraction, no serde or Jackson.
     runtimeOnly(libs.micronaut.json.core)
 
-    // TestServer, which the client and gui tests use to run the real server on a random port
+    // TestServer, which the server and client tests use to run the real server on a random port
     testFixturesApi(libs.micronaut.http.server)
 }
 
@@ -36,8 +36,9 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 tasks.shadowJar {
-    // Micronaut finds its bean definitions and other services through META-INF/services and
-    // META-INF/micronaut/**, so entries from different jars have to be merged instead of overwriting each other
+    // Merge META-INF/services files that several jars provide (e.g. Micronaut's TypeConverterRegistrar) instead
+    // of keeping only one. Micronaut 4 bean definitions under META-INF/micronaut/** are one file per bean, so they
+    // don't collide and need no merging.
     mergeServiceFiles()
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }

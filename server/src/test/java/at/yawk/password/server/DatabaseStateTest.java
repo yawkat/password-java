@@ -4,7 +4,7 @@ import java.util.Set;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
-public class DatabaseServerTest {
+public class DatabaseStateTest {
     @Test
     public void testTokenSetIsBounded() {
         Set<Integer> tokens = DatabaseState.createTokenSet();

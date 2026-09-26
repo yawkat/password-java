@@ -113,13 +113,17 @@ public class DatabaseState {
         return challenge;
     }
 
+    boolean isSharedSecretSet() throws IOException {
+        return sharedSecretStorageProvider.load() != null;
+    }
+
     /**
      * Set the shared secret, unless one is already set.
      *
      * @return {@code false} if a shared secret was already set, in which case it is left unchanged.
      */
     synchronized boolean setSharedSecretIfUnset(byte[] secret) throws IOException {
-        if (sharedSecretStorageProvider.load() != null) {
+        if (isSharedSecretSet()) {
             return false;
         }
         sharedSecretStorageProvider.save(secret);
