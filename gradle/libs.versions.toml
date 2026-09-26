@@ -11,7 +11,7 @@ jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.1.
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 testng = { module = "org.testng:testng", version = "7.12.0" }
-scrypt = { module = "com.lambdaworks:scrypt", version = "1.4.0" }
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.86" }
 jopt-simple = { module = "net.sf.jopt-simple:jopt-simple", version = "5.0.4" }
 spark-core = { module = "com.sparkjava:spark-core", version = "2.9.4" }
 expiringmap = { module = "net.jodah:expiringmap", version = "0.5.11" }

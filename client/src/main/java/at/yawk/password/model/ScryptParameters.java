@@ -1,11 +1,9 @@
 package at.yawk.password.model;
 
-import com.lambdaworks.crypto.SCrypt;
-import java.security.GeneralSecurityException;
-import lombok.SneakyThrows;
 import lombok.Value;
 import lombok.With;
 import lombok.extern.slf4j.Slf4j;
+import org.bouncycastle.crypto.generators.SCrypt;
 
 /**
  * @author yawkat
@@ -20,7 +18,6 @@ public class ScryptParameters {
     private final int dkLen;
     private final byte[] salt;
 
-    @SneakyThrows(GeneralSecurityException.class)
     public byte[] runScrypt(byte[] password) {
         if (log.isDebugEnabled()) {
             log.debug("Hashing password with parameters {}", this);
@@ -34,7 +31,7 @@ public class ScryptParameters {
         }
     }
 
-    private byte[] doRunScrypt(byte[] password) throws GeneralSecurityException {
-        return SCrypt.scrypt(password, salt, 1 << expN, r, p, dkLen);
+    private byte[] doRunScrypt(byte[] password) {
+        return SCrypt.generate(password, salt, 1 << expN, r, p, dkLen);
     }
 }

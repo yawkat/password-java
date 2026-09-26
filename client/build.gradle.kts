@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api(project(":shared"))
+    implementation(libs.bouncycastle.bcprov)
 
     testFixturesCompileOnly(libs.jetbrains.annotations)
 

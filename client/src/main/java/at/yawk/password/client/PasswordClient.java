@@ -27,8 +27,12 @@ public class PasswordClient {
 
     public PasswordClient(String url, LocalStorageProvider localStorageProvider, byte[] password) {
         this.password = password;
-        databaseClient = new DatabaseClient(localStorageProvider, url, SHARED_SECRET_PARAMETERS.runScrypt(password));
+        databaseClient = new DatabaseClient(localStorageProvider, url, deriveSharedSecret(password));
         objectMapper = new ObjectMapper();
+    }
+
+    static byte[] deriveSharedSecret(byte[] password) {
+        return SHARED_SECRET_PARAMETERS.runScrypt(password);
     }
 
     public ClientValue<PasswordBlob> load() throws Exception {
