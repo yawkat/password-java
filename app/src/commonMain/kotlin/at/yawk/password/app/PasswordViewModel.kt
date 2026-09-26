@@ -9,7 +9,9 @@ import at.yawk.password.model.PasswordEntry
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,12 @@ import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger(PasswordViewModel::class.java)
+
+/**
+ * How long the app may stay in the background (Android) before it locks, discarding unsaved edits. Short absences,
+ * e.g. to paste a generated password into a website, keep the database unlocked and the editor as it was.
+ */
+const val BACKGROUND_LOCK_TIMEOUT_MS = 5 * 60 * 1000L
 
 /**
  * Owns the unlocked [PasswordStore] and exposes the app state as [state].
@@ -35,6 +43,9 @@ class PasswordViewModel(
     private val platform: Platform,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clientFactory: (String, LocalStorageProvider, ByteArray) -> PasswordClient = ::PasswordClient,
+    /** Monotonic clock in milliseconds that keeps running while the device sleeps (Android: elapsedRealtime) */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val backgroundLockTimeoutMs: Long = BACKGROUND_LOCK_TIMEOUT_MS,
 ) : ViewModel() {
     // Unlocking (with a placeholder config) while the configuration loads
     private val _state = MutableStateFlow<UiState>(UiState.Unlocking(AppConfig("", "")))
@@ -51,6 +62,23 @@ class PasswordViewModel(
 
     /** Client waiting for [confirmCreate] */
     private var pendingClient: PasswordClient? = null
+
+    /**
+     * UI state of the unlocked screen, including an entry being edited. It is kept here rather than in the
+     * composition, so that recreating the activity (Android) can't lose unsaved edits, and is replaced for every
+     * session, so nothing of it outlives a lock.
+     */
+    var screenState = MainScreenState()
+        private set
+
+    /**
+     * Incremented by [lockNow]. An operation that was started in an earlier session discards its result.
+     */
+    private var session = 0L
+
+    /** [clock] time when the app went to the background, or `null` while it is in the foreground */
+    private var backgroundSince: Long? = null
+    private var backgroundLock: Job? = null
 
     init {
         viewModelScope.launch {
@@ -75,12 +103,18 @@ class PasswordViewModel(
         val bytes = encodePassword(password)
         val config = locked.config.copy(url = url.trim().ifEmpty { locked.config.url })
         _state.value = UiState.Unlocking(config)
+        val unlockSession = session
         viewModelScope.launch {
             mutex.withLock {
                 try {
                     val (client, opened) = withContext(ioDispatcher) {
                         val client = clientFactory(config.url, platform.openStorage(config), bytes)
                         client to PasswordStore.open(client)
+                    }
+                    if (session != unlockSession) {
+                        // locked meanwhile
+                        bytes.wipe()
+                        return@withLock
                     }
                     this@PasswordViewModel.password = bytes
                     this@PasswordViewModel.config = config
@@ -95,7 +129,9 @@ class PasswordViewModel(
                 } catch (e: Exception) {
                     log.warn("Unlock failed", e)
                     bytes.wipe()
-                    _state.value = UiState.Locked(config, unlockErrorMessage(e))
+                    if (session == unlockSession) {
+                        _state.value = UiState.Locked(config, unlockErrorMessage(e))
+                    }
                 }
             }
         }
@@ -135,13 +171,69 @@ class PasswordViewModel(
         if (unlocked.busy) {
             return
         }
-        _state.value = unlocked.copy(busy = true)
-        viewModelScope.launch {
-            mutex.withLock {
-                store = null
-                wipePassword()
-                _state.value = UiState.Locked(config!!)
+        lockNow()
+    }
+
+    /**
+     * The app went to the background: lock after [backgroundLockTimeoutMs], unless it comes back before.
+     */
+    fun onBackground() {
+        if (backgroundSince != null) {
+            return
+        }
+        backgroundSince = clock()
+        backgroundLock = viewModelScope.launch {
+            delay(backgroundLockTimeoutMs)
+            lockNow()
+        }
+    }
+
+    /**
+     * The app is in the foreground again. If it was away for [backgroundLockTimeoutMs] or longer, lock now: the timer
+     * of [onBackground] may not have run while the process was frozen or the device was asleep. This locks right away,
+     * before anything is drawn.
+     */
+    fun onForeground() {
+        val since = backgroundSince ?: return
+        backgroundSince = null
+        backgroundLock?.cancel()
+        backgroundLock = null
+        if (clock() - since >= backgroundLockTimeoutMs) {
+            lockNow()
+        }
+    }
+
+    /**
+     * Lock right away, also while unlocking or while an operation (saving, reloading) runs, and discard an offered
+     * database creation. Unlike [lock], this never refuses.
+     *
+     * A running operation can't be interrupted (it may be stuck in a network request until that times out). It goes
+     * on in the background, and its result is discarded. It still needs the master password (to encrypt what it
+     * saves), so the password is wiped once the operation is done; right away if none runs.
+     */
+    fun lockNow() {
+        val config = when (val s = _state.value) {
+            is UiState.Unlocking -> s.config
+            is UiState.ConfirmCreate -> s.config
+            is UiState.Unlocked -> config ?: return
+            else -> return
+        }
+        session++
+        store = null
+        screenState = MainScreenState()
+        pendingClient = null
+        val password = password
+        this.password = null
+        _state.value = UiState.Locked(config)
+        if (mutex.tryLock()) {
+            try {
+                password?.wipe()
+            } finally {
+                mutex.unlock()
             }
+        } else {
+            // the mutex is fair, so this runs after the running operation
+            viewModelScope.launch { mutex.withLock { password?.wipe() } }
         }
     }
 
@@ -155,6 +247,7 @@ class PasswordViewModel(
 
     private fun showUnlocked(store: PasswordStore, status: String) {
         this.store = store
+        screenState = MainScreenState()
         _state.value = UiState.Unlocked(
             entries = store.entries,
             fromLocalStorage = store.isFromLocalStorage,
@@ -237,10 +330,15 @@ class PasswordViewModel(
             return viewModelScope.async { null }
         }
         _state.value = unlocked.copy(busy = true, status = StatusMessage(busyText), error = null)
+        val operationSession = session
         return viewModelScope.async {
             mutex.withLock {
                 try {
                     val result = withContext(ioDispatcher) { operation(store) }
+                    if (session != operationSession) {
+                        // locked meanwhile
+                        return@withLock null
+                    }
                     updateUnlocked {
                         it.copy(
                             entries = store.entries,
@@ -253,6 +351,9 @@ class PasswordViewModel(
                     result
                 } catch (e: Exception) {
                     log.warn("$errorTitle", e)
+                    if (session != operationSession) {
+                        return@withLock null
+                    }
                     updateUnlocked {
                         it.copy(busy = false, status = null, error = ErrorMessage(errorTitle, errorText(e.message ?: e.toString())))
                     }

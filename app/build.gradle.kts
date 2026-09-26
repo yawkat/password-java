@@ -9,13 +9,19 @@ plugins {
     alias(libs.plugins.compose)
 }
 
+// The Android target needs the Android SDK and AGP, which the root project only puts on the build classpath when the
+// Android build is enabled. This script must also compile without AGP, so it can't refer to AGP's types, and the
+// target is added by a plugin from build-logic instead (AndroidTargetPlugin).
+if (providers.gradleProperty("password.android").orNull != "false") {
+    apply(plugin = "password.android-target")
+}
+
 kotlin {
     jvm("desktop") {
         compilerOptions {
             jvmTarget = JvmTarget.JVM_17
         }
     }
-    // The Android target (#20) is added here as `androidLibrary { ... }`, see the plan.
 
     sourceSets {
         commonMain.dependencies {
@@ -24,9 +30,10 @@ kotlin {
             implementation(libs.compose.material3)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             implementation(libs.kotlinx.coroutines.core)
-            // :client is a plain JVM (Java) library. With a single (JVM) target, commonMain is compiled only as part
-            // of that target, so this works as is. Once an Android target shares commonMain, it may have to move to
-            // the target source sets instead.
+            // :client is a plain JVM (Java) library. That is fine here although commonMain is shared between the
+            // desktop and the Android target: both are JVM targets, so Kotlin analyzes their shared code against the
+            // JDK and compiles it only as part of each target (compileCommonMainKotlinMetadata is skipped), and
+            // JVM-only dependencies work. Adding a non-JVM target would require moving this to the target source sets.
             implementation(project(":client"))
         }
         commonTest.dependencies {

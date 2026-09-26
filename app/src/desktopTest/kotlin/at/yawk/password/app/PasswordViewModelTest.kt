@@ -43,14 +43,23 @@ class PasswordViewModelTest {
         server.close()
     }
 
-    private fun newViewModel(): PasswordViewModel {
+    /** Fake clock for the background lock, in milliseconds */
+    @Volatile
+    private var now = 0L
+
+    private fun newViewModel(backgroundLockTimeoutMs: Long = BACKGROUND_LOCK_TIMEOUT_MS): PasswordViewModel {
         val store = ViewModelStore().also { stores += it }
         val factory = viewModelFactory {
             initializer {
-                PasswordViewModel(platform, clientFactory = { url, storage, password ->
-                    passwords += password
-                    PasswordClient(url, storage, password)
-                })
+                PasswordViewModel(
+                    platform,
+                    clientFactory = { url, storage, password ->
+                        passwords += password
+                        PasswordClient(url, storage, password)
+                    },
+                    clock = { now },
+                    backgroundLockTimeoutMs = backgroundLockTimeoutMs,
+                )
             }
         }
         return ViewModelProvider.create(store, factory)[PasswordViewModel::class]
@@ -191,6 +200,144 @@ class PasswordViewModelTest {
         assertNull(runBlocking { second.await() })
         assertNotNull(runBlocking { first.await() })
         assertEquals(listOf("a"), vm.awaitIdle().entries.map { it.name })
+    }
+
+    private fun eventually(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 120_000
+        while (!condition()) {
+            assertTrue(System.currentTimeMillis() < deadline, "timed out")
+            Thread.sleep(20)
+        }
+    }
+
+    @Test
+    fun lockNowDoesNotWaitForStuckOperation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        // nothing to lock yet
+        vm.lockNow()
+        assertTrue(vm.state.value is UiState.Locked)
+        unlockedEmpty(vm)
+        val sessionPassword = passwords.last()
+
+        // the upload hangs
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val save = vm.save(null, "a", "1")
+        Thread.sleep(500)
+        vm.lockNow()
+        // locked right away, unlike lock(), which is refused while saving
+        assertEquals(server.url, (vm.state.value as UiState.Locked).config.url)
+        // the save still needs the password
+        assertFalse(sessionPassword.all { it == 0.toByte() }, "password in use")
+
+        gate.countDown()
+        // the save finishes (it can't be interrupted), but its result is discarded
+        assertNull(runBlocking { save.await() })
+        assertNotNull(server.db.get(), "the save went through")
+        assertTrue(vm.state.value is UiState.Locked)
+        eventually { sessionPassword.all { it == 0.toByte() } }
+    }
+
+    @Test
+    fun lockNowWhileUnlocking() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.lockNow()
+        assertTrue(vm.state.value is UiState.Locked)
+        // the unlock finishes in the background without showing anything, and wipes its password
+        eventually { passwords.isNotEmpty() && passwords.last().all { it == 0.toByte() } }
+        Thread.sleep(200)
+        assertEquals(UiState.Locked(AppConfig(server.url, "/nonexistent")), vm.state.value)
+        assertNull(server.db.get())
+    }
+
+    @Test
+    fun lockNowDiscardsCreation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.lockNow()
+        vm.await<UiState.Locked>()
+        assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped")
+        // not usable anymore
+        vm.confirmCreate("secret")
+        assertTrue(vm.state.value is UiState.Locked)
+        assertNull(server.db.get())
+    }
+
+    private fun unlockedEmpty(vm: PasswordViewModel) {
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.confirmCreate("secret")
+        vm.await<UiState.Unlocked>()
+    }
+
+    @Test
+    fun screenStateLivesPerSession() {
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        // an edit in progress stays with the view model (e.g. across activity recreation)...
+        vm.screenState.startEditing(null)
+        vm.screenState.draftValue = "draft"
+        assertEquals("draft", vm.screenState.draftValue)
+        // ...but not beyond the session
+        vm.lockNow()
+        assertFalse(vm.screenState.editing)
+        assertEquals("", vm.screenState.draftValue)
+    }
+
+    @Test
+    fun shortBackgroundKeepsSession() {
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        vm.onBackground()
+        now += BACKGROUND_LOCK_TIMEOUT_MS - 1
+        vm.onForeground()
+        Thread.sleep(200)
+        assertTrue(vm.state.value is UiState.Unlocked)
+        // still usable
+        assertNotNull(runBlocking { vm.save(null, "a", "1").await() })
+    }
+
+    @Test
+    fun longBackgroundLocksOnReturn() {
+        // e.g. the process was frozen, so the timer didn't run
+        val vm = newViewModel()
+        unlockedEmpty(vm)
+        val sessionPassword = passwords.last()
+        vm.onBackground()
+        now += BACKGROUND_LOCK_TIMEOUT_MS
+        vm.onForeground()
+        vm.await<UiState.Locked>()
+        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped")
+    }
+
+    @Test
+    fun backgroundTimerLocks() {
+        val vm = newViewModel(backgroundLockTimeoutMs = 100)
+        unlockedEmpty(vm)
+        vm.onBackground()
+        vm.await<UiState.Locked>()
+        // back in the foreground afterwards: stays locked, nothing else happens
+        vm.onForeground()
+        assertTrue(vm.state.value is UiState.Locked)
+    }
+
+    @Test
+    fun returnCancelsBackgroundTimer() {
+        val vm = newViewModel(backgroundLockTimeoutMs = 300)
+        unlockedEmpty(vm)
+        vm.onBackground()
+        vm.onForeground()
+        Thread.sleep(600)
+        assertTrue(vm.state.value is UiState.Unlocked)
+        // a second absence starts a new timer
+        vm.onBackground()
+        vm.await<UiState.Locked>()
     }
 
     @Test
