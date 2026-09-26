@@ -1,5 +1,3 @@
-import at.yawk.password.build.Java17ApiBackport
-import com.android.build.api.instrumentation.InstrumentationScope
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // The Android app: a thin shell around :app's Android target. AGP compiles the Kotlin sources itself (built-in Kotlin);
@@ -7,6 +5,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.application")
     alias(libs.plugins.kotlin.compose)
+    // fails `check` if the APKs call platform methods that are missing at minSdk (build-logic/.../ApiLevelCheck.kt)
+    id("password.android-api-check")
 }
 
 android {
@@ -59,11 +59,23 @@ kotlin {
     }
 }
 
-androidComponents {
-    onVariants { variant ->
-        // Jackson 3 calls Java 17 methods that only exist since API 34, see Java17ApiBackport
-        variant.instrumentation.transformClassesWith(Java17ApiBackport::class.java, InstrumentationScope.ALL) {}
-    }
+apiLevelCheck {
+    // References above minSdk that can't be reached (or work anyway) on older Android versions. Each needs a reason.
+    allowed.putAll(
+        mapOf(
+            // Jackson loads its java.beans support (@ConstructorProperties, @Transient) reflectively and skips it
+            // when the classes are missing, as they are on Android
+            "java/beans/*" to "Jackson's optional java.beans support, only used when java.beans exists",
+            // kotlinx.coroutines and kotlinx.serialization check whether ClassValue works and fall back otherwise
+            "java/lang/ClassValue.<init>()V" to "only used when available",
+            // declared by StringBuilder itself only since API 37, but inherited from AbstractStringBuilder before
+            "java/lang/StringBuilder.getChars(II[CI)V" to "inherited on older versions",
+            // the debug agent of kotlinx.coroutines, only loaded as a JVM agent
+            "java/lang/instrument/*" to "JVM agent code, never loaded on Android",
+            // BouncyCastle's LDAP certificate store; only SCrypt is used
+            "javax/naming/*" to "BouncyCastle LDAP support, never used",
+        ),
+    )
 }
 
 dependencies {

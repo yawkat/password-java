@@ -5,8 +5,11 @@ buildscript {
     // must be loaded once, by a class loader shared by all projects using it; subprojects inherit this one.
     //
     // AGP comes in as a dependency of the included build-logic build (see settings.gradle.kts), which holds the typed
-    // configuration of :app's Android target.
-    if (providers.gradleProperty("password.android").orNull != "false") {
+    // configuration of :app's Android target. The conditions must match those of settings.gradle.kts: the Android
+    // build needs the app.
+    if (providers.gradleProperty("password.app").orNull != "false" &&
+        providers.gradleProperty("password.android").orNull != "false"
+    ) {
         repositories {
             google {
                 content {
@@ -18,7 +21,7 @@ buildscript {
             mavenCentral()
         }
         dependencies {
-            classpath("at.yawk.password.build:build-logic")
+            classpath("at.yawk.password.gradle:build-logic")
         }
     }
 }
