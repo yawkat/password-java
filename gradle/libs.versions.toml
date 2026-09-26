@@ -1,5 +1,5 @@
 [versions]
-jackson = "3.2.3"
+jackson = "2.22.3"
 # Micronaut platform BOM, applied to :server by the Micronaut Gradle plugin
 micronaut-platform = "5.1.5"
 lombok = "1.18.48"
@@ -20,7 +20,7 @@ android-buildTools = "37.0.0"
 android-minSdk = "29"
 
 [libraries]
-jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.1.0" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
