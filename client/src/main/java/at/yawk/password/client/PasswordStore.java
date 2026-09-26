@@ -1,7 +1,5 @@
-package at.yawk.password.gui;
+package at.yawk.password.client;
 
-import at.yawk.password.client.ClientValue;
-import at.yawk.password.client.PasswordClient;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import java.util.ArrayList;
@@ -20,7 +18,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * @author yawkat
  */
-class PasswordStore {
+public final class PasswordStore {
     private final PasswordClient client;
     private volatile PasswordBlob blob;
     private volatile boolean fromLocalStorage;
@@ -37,7 +35,7 @@ class PasswordStore {
      * @return The store, or {@code null} if there is no database yet (neither remote nor local).
      */
     @Nullable
-    static PasswordStore open(PasswordClient client) throws Exception {
+    public static PasswordStore open(PasswordClient client) throws Exception {
         ClientValue<PasswordBlob> value = client.load();
         if (value.getValue() == null) {
             return null;
@@ -48,28 +46,28 @@ class PasswordStore {
     /**
      * Create an empty store. Nothing is saved until the first modification.
      */
-    static PasswordStore createEmpty(PasswordClient client) {
+    public static PasswordStore createEmpty(PasswordClient client) {
         return new PasswordStore(client, new PasswordBlob(), false);
     }
 
-    List<PasswordEntry> getEntries() {
+    public List<PasswordEntry> getEntries() {
         return Collections.unmodifiableList(blob.getPasswords());
     }
 
     /**
      * @return Whether the current data was loaded from the local copy because the server was unreachable.
      */
-    boolean isFromLocalStorage() {
+    public boolean isFromLocalStorage() {
         return fromLocalStorage;
     }
 
-    void reload() throws Exception {
+    public synchronized void reload() throws Exception {
         ClientValue<PasswordBlob> value = client.load();
         blob = value.getValue() == null ? new PasswordBlob() : value.getValue();
         fromLocalStorage = value.isFromLocalStorage();
     }
 
-    PasswordEntry add(String name, String value) throws Exception {
+    public PasswordEntry add(String name, String value) throws Exception {
         PasswordEntry entry = entry(name, value);
         modify(entries -> {
             entries.add(entry);
@@ -78,7 +76,7 @@ class PasswordStore {
         return entry;
     }
 
-    PasswordEntry update(PasswordEntry old, String name, String value) throws Exception {
+    public PasswordEntry update(PasswordEntry old, String name, String value) throws Exception {
         PasswordEntry entry = entry(name, value);
         modify(entries -> {
             entries.set(indexOf(entries, old), entry);
@@ -87,7 +85,7 @@ class PasswordStore {
         return entry;
     }
 
-    void delete(PasswordEntry old) throws Exception {
+    public void delete(PasswordEntry old) throws Exception {
         modify(entries -> {
             entries.remove(indexOf(entries, old));
             return entries;
@@ -122,7 +120,7 @@ class PasswordStore {
     /**
      * @return The first line of an entry value, which by convention is the password.
      */
-    static String firstLine(@Nullable String value) {
+    public static String firstLine(@Nullable String value) {
         if (value == null) {
             return "";
         }

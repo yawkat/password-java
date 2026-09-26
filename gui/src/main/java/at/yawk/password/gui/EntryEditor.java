@@ -1,5 +1,6 @@
 package at.yawk.password.gui;
 
+import at.yawk.password.client.PasswordStore;
 import at.yawk.password.model.PasswordEntry;
 import io.qt.gui.QFontDatabase;
 import io.qt.gui.QIcon;

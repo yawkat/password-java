@@ -2,6 +2,7 @@ package at.yawk.password.gui;
 
 import at.yawk.password.MultiFileLocalStorageProvider;
 import at.yawk.password.client.PasswordClient;
+import at.yawk.password.client.PasswordStore;
 import io.qt.core.Qt;
 import io.qt.widgets.QDialog;
 import io.qt.widgets.QDialogButtonBox;

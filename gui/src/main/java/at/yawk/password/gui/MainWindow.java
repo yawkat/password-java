@@ -1,5 +1,6 @@
 package at.yawk.password.gui;
 
+import at.yawk.password.client.PasswordStore;
 import at.yawk.password.model.PasswordEntry;
 import io.qt.core.QModelIndex;
 import io.qt.core.QSortFilterProxyModel;

@@ -11,16 +11,19 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class HashUtil {
-    @SneakyThrows(NoSuchAlgorithmException.class)
+    private static final SecureRandom RNG = new SecureRandom();
+
     public static byte[] generateRandomBytes(int length)  {
-        SecureRandom rng = SecureRandom.getInstance("SHA1PRNG");
         byte[] salt = new byte[length];
-        rng.nextBytes(salt);
+        RNG.nextBytes(salt);
         return salt;
     }
 
+    /**
+     * SHA-512 over the concatenation of {@code parts}.
+     */
     @SneakyThrows(NoSuchAlgorithmException.class)
-    public static byte[] sha256(byte[]... parts) {
+    public static byte[] sha512(byte[]... parts) {
         MessageDigest digest = MessageDigest.getInstance("SHA-512");
         for (byte[] part : parts) {
             digest.update(part);

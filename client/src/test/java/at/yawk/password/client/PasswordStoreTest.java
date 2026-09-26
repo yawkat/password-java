@@ -1,42 +1,68 @@
-package at.yawk.password.gui;
+package at.yawk.password.client;
 
 import at.yawk.password.HashUtil;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.MemoryStorageProvider;
-import at.yawk.password.client.PasswordClient;
 import at.yawk.password.model.PasswordEntry;
-import at.yawk.password.server.DatabaseServer;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.util.concurrent.atomic.AtomicReference;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-import spark.Spark;
 
 /**
  * @author yawkat
  */
 public class PasswordStoreTest {
-    private static final int PORT = 1235;
-    private static final String URL = "http://127.0.0.1:" + PORT;
+    private HttpServer server;
+    private String url;
 
+    /**
+     * Minimal in-memory stand-in for the server that stores {@code /db} without checking tokens. Spark only supports
+     * a single server per JVM, which {@code ClientServerTest} already uses.
+     */
     @BeforeClass
-    public void open() {
-        Spark.port(PORT);
-        new DatabaseServer(new MemoryStorageProvider(), new MemoryStorageProvider()).start();
-        Spark.awaitInitialization();
+    public void open() throws Exception {
+        AtomicReference<byte[]> db = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            try (exchange) {
+                byte[] body;
+                String path = exchange.getRequestURI().getPath();
+                if (path.equals("/challenge")) {
+                    body = HashUtil.generateRandomBytes(32);
+                } else if (path.equals("/db") && exchange.getRequestMethod().equals("PUT")) {
+                    db.set(exchange.getRequestBody().readAllBytes());
+                    body = new byte[0];
+                } else if (path.equals("/db")) {
+                    body = db.get();
+                } else {
+                    body = null;
+                }
+                if (body == null) {
+                    exchange.sendResponseHeaders(404, -1);
+                } else {
+                    exchange.sendResponseHeaders(200, body.length == 0 ? -1 : body.length);
+                    exchange.getResponseBody().write(body);
+                }
+            }
+        });
+        server.start();
+        url = "http://127.0.0.1:" + server.getAddress().getPort();
     }
 
     @AfterClass
     public void close() {
-        Spark.stop();
-        Spark.awaitStop();
+        server.stop(0);
     }
 
     @Test
     public void testModifyAndReload() throws Exception {
         byte[] password = HashUtil.generateRandomBytes(16);
         LocalStorageProvider storage = new MemoryStorageProvider();
-        PasswordClient client = new PasswordClient(URL, storage, password);
+        PasswordClient client = new PasswordClient(url, storage, password);
 
         Assert.assertNull(PasswordStore.open(client));
         PasswordStore store = PasswordStore.createEmpty(client);
@@ -48,7 +74,7 @@ public class PasswordStoreTest {
         Assert.assertEquals(store.getEntries().size(), 1);
         Assert.assertSame(store.getEntries().get(0), a2);
 
-        PasswordStore reopened = PasswordStore.open(new PasswordClient(URL, new MemoryStorageProvider(), password));
+        PasswordStore reopened = PasswordStore.open(new PasswordClient(url, new MemoryStorageProvider(), password));
         Assert.assertNotNull(reopened);
         Assert.assertFalse(reopened.isFromLocalStorage());
         Assert.assertEquals(reopened.getEntries(), store.getEntries());

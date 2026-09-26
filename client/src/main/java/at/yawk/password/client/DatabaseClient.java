@@ -88,7 +88,7 @@ class DatabaseClient {
     }
 
     private byte[] requestToken() throws IOException {
-        return HashUtil.sha256(sharedSecret, requestChallenge());
+        return HashUtil.sha512(sharedSecret, requestChallenge());
     }
 
     private byte[] requestChallenge() throws IOException {

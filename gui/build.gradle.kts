@@ -7,10 +7,6 @@ dependencies {
     implementation(libs.qtjambi)
     runtimeOnly(libs.qtjambi.native.linux.x64)
     runtimeOnly(libs.slf4j.simple)
-
-    testImplementation(testFixtures(project(":client")))
-    testImplementation(project(":server"))
-    testImplementation(libs.spark.core)
 }
 
 tasks.withType<JavaCompile>().configureEach {
