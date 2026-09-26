@@ -176,7 +176,7 @@ returned.
 ## Client behaviour
 
 Non-2xx responses are errors, including redirects that the HTTP client does not follow (e.g. from `http` to
-`https`).
+`https`). Connecting times out after 15 seconds, and waiting for data after 60 seconds.
 
 The client keeps a local copy of the encrypted blob in the same layout as the server's data directory (timestamped
 files plus `latest`).
@@ -187,7 +187,7 @@ Every request to `/db` is preceded by `GET /challenge`. If that returns 404, the
 secret with `PUT /shared-secret` and requests the challenge again. It does this for any URL whose `/challenge`
 returns 404, including a mistyped URL or a misconfigured proxy, which then receives the secret.
 
-Enrollment happens during the first load, before the desktop app asks the user to confirm creating a new database.
+Enrollment happens during the first load, before the app asks the user to confirm creating a new database.
 On a fresh server, whatever master password is entered first, including a mistyped one, claims the server
 permanently. There is no protocol to change or reset the secret; the operator has to delete `shared-secret` (and
 `latest`, since the old database cannot be decrypted with a new password) on the server.
@@ -202,7 +202,7 @@ after the secret was accepted, the client enrolls again; a 403 there is raised a
 2. If that fails (network error or any error status):
    - with a local copy, decrypt and verify the local copy and use it, marked as coming from local storage;
    - without a local copy, a 404 means there is no database yet; any other error is raised. For "no database
-     yet", the desktop app asks the user to repeat the master password (`ConfirmCreate`) and only creates an empty
+     yet", the apps ask the user to repeat the master password (`ConfirmCreate`) and only create an empty
      database if both match. Nothing is uploaded until the first modification.
 3. Otherwise decrypt and verify the remote blob.
    - If that fails, fall back to the local copy as above. If there is no local copy, or it also fails, the remote
@@ -218,5 +218,22 @@ Each modification encrypts the whole database with a new salt and IV, then:
 2. uploads it with `PUT /db`.
 
 If the upload fails, the local copy already contains the new blob and the error is raised. The client does not merge:
-a save replaces whatever the server had, including after the database was loaded from the local copy. The desktop app
-asks for confirmation before the first save in that state.
+a save replaces whatever the server had, including after the database was loaded from the local copy. The apps ask
+for confirmation before the first save in that state.
+
+### Apps
+
+Both apps copy only the first line of an entry (the password) on a plain copy, and clear the clipboard after 30
+seconds if it still holds what they copied.
+
+The Android app additionally:
+
+- marks copied text as sensitive (`android.content.extra.IS_SENSITIVE`), and recognizes its own copies by their clip
+  description. The 30 seconds are an inexact alarm, so it may be a little later. Android only lets the focused app
+  look at the clipboard; when the time runs out while the app is in the background, it clears the clipboard without
+  checking.
+- locks after five minutes in the background (or right away when it comes back later than that), discarding unsaved
+  edits. Locking does not wait for a running request: its result is discarded, and the master password is wiped
+  once it is done.
+- keeps its window out of screenshots and the recent apps (`FLAG_SECURE`), and asks the keyboard not to learn from
+  the master password and entry fields.

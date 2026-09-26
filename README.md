@@ -16,11 +16,13 @@ much faster than against the encrypted database itself. See [SPEC.md](SPEC.md#sh
 | `shared` | Local file storage and hashing helpers used by both client and server (Java 17)                    |
 | `client` | Protocol client, encryption (scrypt, AES, HMAC) and the `PasswordStore` model (Java 17)            |
 | `server` | The database server, a Micronaut 5 application (Java 25)                                           |
-| `app`    | The desktop GUI (`password-gui`), a Compose Multiplatform application built on `client`           |
+| `app`    | The GUI, a Compose Multiplatform application built on `client`: the desktop app (`password-gui`) and the Android target |
+| `android`| The Android app, a thin shell around `app`                                                         |
 
 ## Building with Gradle
 
-You need JDK 25. Gradle 9.8 comes with the wrapper.
+You need JDK 25. Gradle 9.8 comes with the wrapper. The Android app also needs the Android SDK (see
+[Android app](#android-app)); leave it out with `-Ppassword.android=false` if you don't have one.
 
 ```sh
 ./gradlew build
@@ -30,8 +32,10 @@ This compiles all modules and runs the tests.
 
 Gradle properties:
 
-- `-Ppassword.app=false` leaves out the `app` module. The desktop app bundles native Skiko libraries for the build
-  platform, so use this where you only need the server and client.
+- `-Ppassword.app=false` leaves out the `app` module, and with it the Android app. The desktop app bundles native
+  Skiko libraries for the build platform, so use this where you only need the server and client.
+- `-Ppassword.android=false` leaves out the Android app (and the Android target of `app`), so the build needs no
+  Android SDK. The nix build uses this.
 
 Useful tasks:
 
@@ -76,12 +80,12 @@ upload fails, and `latest` is left deleted.
 
 A fresh server has no `shared-secret`. The first client that connects sets it, unauthenticated, from the master
 password it was given (see [SPEC.md](SPEC.md#client-behaviour)). This happens when the client first *loads* the
-database, before the desktop app asks you to confirm creating a new one. A mistyped master password therefore claims
+database, before the app asks you to confirm creating a new one. A mistyped master password therefore claims
 the server permanently, and the correct password is rejected from then on.
 
 Enroll right after deploying, before the port is reachable by others (before setting `openFirewall` or exposing it
-through a proxy): open the desktop app with the new server's URL and your master password, and confirm creating the
-database.
+through a proxy): open the desktop or Android app with the new server's URL and your master password, and confirm
+creating the database.
 
 To reset a server, stop it and delete `shared-secret` and `latest` from the data directory. Also delete `latest` in
 each client's `storageDir`, since the client would otherwise fall back to the local copy and fail to decrypt it. The
@@ -114,6 +118,29 @@ The local copy uses the same layout as the server's data directory (timestamped 
 
 If the server is unreachable, the app opens the local copy and warns before saving changes made offline.
 
+## Android app
+
+The Android app (applicationId `at.yawk.password.android`, the same as the old
+[password-android](https://github.com/yawkat/password-android)) runs on Android 10 (API 29) and later. It uses the
+same server and database as the desktop app.
+
+Building it needs the Android SDK: set `ANDROID_HOME`, or `sdk.dir` in a `local.properties` file (which git ignores).
+The Android Gradle Plugin downloads missing SDK packages if their licenses have been accepted.
+
+```sh
+./gradlew :android:assembleDebug     # android/build/outputs/apk/debug/android-debug.apk
+./gradlew :android:assembleRelease   # android/build/outputs/apk/release/android-release-unsigned.apk
+```
+
+The repository has no release signing configuration: sign the release APK yourself (e.g. with `apksigner`), or
+install the debug build. `./gradlew build` builds both and also checks that they only use Android APIs that exist on
+API 29 (`checkDebugApiLevels`, `checkReleaseApiLevels`).
+
+The app keeps the server URL in its settings (default `https://pw.yawk.at`; enter your own on the unlock screen) and
+the local copy of the database in its private storage. It locks after five minutes in the background, and removes a
+copied password from the clipboard after about 30 seconds. Debug builds also allow plain HTTP to `localhost` and
+`127.0.0.1`, e.g. to a test server reached through `adb reverse`; release builds require HTTPS.
+
 ## Building with nix
 
 The flake supports `x86_64-linux` and `aarch64-linux`.
@@ -123,7 +150,7 @@ nix build .#server   # result/bin/password-server, takes the same -p and -d opti
 nix build .#app      # result/bin/password-gui, x86_64-linux only
 nix run              # the default package: app on x86_64-linux, server elsewhere
 nix develop          # shell with JDK 25 and Gradle
-nix flake check -L   # builds everything, runs the Gradle tests and a NixOS VM test of the module
+nix flake check -L   # builds everything except the Android app, runs the Gradle tests and a NixOS VM test of the module
 ```
 
 ### Using the flake from a NixOS configuration
