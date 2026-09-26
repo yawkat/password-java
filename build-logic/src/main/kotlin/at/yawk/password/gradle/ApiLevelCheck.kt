@@ -30,6 +30,33 @@ import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
 
 /**
+ * Public methods of the non-public `java.lang.AbstractStringBuilder`, which StringBuilder and StringBuffer have had
+ * since API 1. api-versions.xml doesn't list the class, nor these methods for its subclasses unless they override them
+ * (StringBuilder declares getChars itself only since API 37, for example).
+ */
+private val ABSTRACT_STRING_BUILDER_METHODS = setOf(
+    "length()I",
+    "capacity()I",
+    "ensureCapacity(I)V",
+    "trimToSize()V",
+    "setLength(I)V",
+    "charAt(I)C",
+    "codePointAt(I)I",
+    "codePointBefore(I)I",
+    "codePointCount(II)I",
+    "offsetByCodePoints(II)I",
+    "getChars(II[CI)V",
+    "setCharAt(IC)V",
+    "substring(I)Ljava/lang/String;",
+    "substring(II)Ljava/lang/String;",
+    "subSequence(II)Ljava/lang/CharSequence;",
+    "indexOf(Ljava/lang/String;)I",
+    "indexOf(Ljava/lang/String;I)I",
+    "lastIndexOf(Ljava/lang/String;)I",
+    "lastIndexOf(Ljava/lang/String;I)I",
+)
+
+/**
  * Settings of the API level check, see [ApiLevelCheckPlugin].
  */
 abstract class ApiLevelCheckExtension {
@@ -41,8 +68,10 @@ abstract class ApiLevelCheckExtension {
 }
 
 /**
- * Fails `check` if an APK of the application refers to a platform method (`java.*`, `javax.*`, `android.*`) that does
- * not exist at the app's minSdk, according to the SDK's `api-versions.xml`.
+ * Fails `check` if an APK of the application uses a platform class, method or field (`java.*`, `javax.*`, `android.*`)
+ * that does not exist at the app's minSdk, according to the SDK's `api-versions.xml`: calls, field accesses, and
+ * class references (`new-instance`, `const-class`, `check-cast`, `instance-of`). A method or field that the SDK
+ * doesn't list at all counts as missing.
  *
  * Lint's NewApi check only covers our own sources. This covers the libraries as well, as dexed into the APK: a Java
  * library built for a newer JDK may call methods that Android lacks and D8 doesn't backport, which then fail with
@@ -109,7 +138,12 @@ abstract class ApiLevelCheckTask : DefaultTask() {
     @get:OutputFile
     abstract val report: RegularFileProperty
 
-    private class ApiClass(val since: Int, val methods: Map<String, Int>, val supers: List<String>)
+    private class ApiClass(
+        val since: Int,
+        val methods: Map<String, Int>,
+        val fields: Map<String, Int>,
+        val supers: List<String>,
+    )
 
     @TaskAction
     fun check() {
@@ -118,17 +152,51 @@ abstract class ApiLevelCheckTask : DefaultTask() {
         val min = minSdk.get()
         val allowed = allowed.get()
 
-        // referenced method -> (API level, callers)
+        // reference -> (API level, callers)
         val violations = sortedMapOf<String, Pair<Int, MutableSet<String>>>()
         val allowedSeen = mutableSetOf<String>()
-        val invoke = Regex("""invoke-\S+ \{[^}]*}, L((?:java|javax|android)/[^;]+);\.([^:]+):(\S+)""")
+        val platform = """L((?:java|javax|android)/[^;]+);"""
+        val methodRef = Regex("""invoke-[\w/-]+ \{[^}]*}, $platform\.([^:]+):([^\s,]+)""")
+        val fieldRef = Regex("""\b[si](?:get|put)(?:-[\w]+)? [^L]*$platform\.([^:]+):(\S+)""")
+        val classRef = Regex("""\b(?:new-instance|const-class|check-cast|instance-of) [^L\[]*$platform""")
         val classDescriptor = Regex("""\s+Class descriptor\s+: 'L([^;]+);'""")
 
-        fun since(owner: String, method: String, seen: MutableSet<String> = mutableSetOf()): Int? {
+        fun lookup(owner: String, member: (ApiClass) -> Int?, seen: MutableSet<String> = mutableSetOf()): Int? {
             val cls = api[owner] ?: return null
             if (!seen.add(owner)) return null
-            cls.methods[method]?.let { return it }
-            return cls.supers.firstNotNullOfOrNull { since(it, method, seen) }
+            member(cls)?.let { return it }
+            return cls.supers.firstNotNullOfOrNull { lookup(it, member, seen) }
+        }
+
+        fun methodSince(owner: String, method: String): Int? {
+            val declared = lookup(owner, { it.methods[method] })
+                // interfaces don't list Object as their supertype
+                ?: api["java/lang/Object"]?.methods?.get(method)
+            if ((owner == "java/lang/StringBuilder" || owner == "java/lang/StringBuffer") &&
+                method in ABSTRACT_STRING_BUILDER_METHODS
+            ) {
+                // inherited from AbstractStringBuilder since API 1, even if the class itself declares it later
+                return 1
+            }
+            return declared
+        }
+
+        /** The API level of the referenced class, or `null` if it is part of the app */
+        fun classSince(owner: String): Int? = api[owner]?.since
+            // Not in the API at all: an error for java/javax, which the app doesn't define. android/ classes that
+            // aren't are part of the app (e.g. the android.support AIDL classes of androidx.core).
+            ?: if (owner.startsWith("android/")) null else Int.MAX_VALUE
+
+        fun check(caller: String, key: String, level: Int) {
+            if (level <= min) return
+            val allowedBy = allowed.keys.firstOrNull { pattern ->
+                if (pattern.endsWith("*")) key.startsWith(pattern.dropLast(1)) else key == pattern
+            }
+            if (allowedBy != null) {
+                allowedSeen += allowedBy
+            } else {
+                violations.getOrPut(key) { level to sortedSetOf() }.second += caller
+            }
         }
 
         val apks = apkDirectory.get().asFile.walk().filter { it.extension == "apk" }.toList()
@@ -149,27 +217,27 @@ abstract class ApiLevelCheckTask : DefaultTask() {
                             caller = deobfuscate[it.groupValues[1]] ?: it.groupValues[1]
                             return@forEachLine
                         }
-                        val match = invoke.find(line) ?: return@forEachLine
                         if (caller.startsWith("androidx/") || caller.startsWith("android/support/")) {
                             return@forEachLine
                         }
-                        val (owner, name, descriptor) = match.destructured
-                        val method = name + descriptor
-                        val level = since(owner, method)
-                            // not declared: an inherited method of a non-public class, check the class instead
-                            ?: api[owner]?.since
-                            // not in the API at all. android/ classes that aren't are part of the app (e.g. the
-                            // android.support AIDL classes of androidx.core).
-                            ?: if (owner.startsWith("android/")) return@forEachLine else Int.MAX_VALUE
-                        if (level <= min) return@forEachLine
-                        val key = "$owner.$method"
-                        val allowedBy = allowed.keys.firstOrNull { pattern ->
-                            if (pattern.endsWith("*")) key.startsWith(pattern.dropLast(1)) else key == pattern
+                        methodRef.find(line)?.let { match ->
+                            val (owner, name, descriptor) = match.destructured
+                            val classLevel = classSince(owner) ?: return@forEachLine
+                            // a method that isn't declared anywhere doesn't exist (at any level)
+                            val level = maxOf(classLevel, methodSince(owner, name + descriptor) ?: Int.MAX_VALUE)
+                            check(caller, "$owner.$name$descriptor", level)
+                            return@forEachLine
                         }
-                        if (allowedBy != null) {
-                            allowedSeen += allowedBy
-                        } else {
-                            violations.getOrPut(key) { level to sortedSetOf() }.second += caller
+                        fieldRef.find(line)?.let { match ->
+                            val (owner, name, type) = match.destructured
+                            val classLevel = classSince(owner) ?: return@forEachLine
+                            val level = maxOf(classLevel, lookup(owner, { it.fields[name] }) ?: Int.MAX_VALUE)
+                            check(caller, "$owner.$name:$type", level)
+                            return@forEachLine
+                        }
+                        classRef.find(line)?.let { match ->
+                            val owner = match.groupValues[1]
+                            check(caller, owner, classSince(owner) ?: return@forEachLine)
                         }
                     }
                     if (process.waitFor() != 0) throw GradleException("dexdump failed on ${entry.name} of $apk")
@@ -181,7 +249,7 @@ abstract class ApiLevelCheckTask : DefaultTask() {
         val text = buildString {
             for ((key, value) in violations) {
                 val level = if (value.first == Int.MAX_VALUE) "missing" else "API ${value.first}"
-                appendLine("$key ($level), called from ${value.second.take(5).joinToString()}")
+                appendLine("$key ($level), used by ${value.second.take(5).joinToString()}")
             }
             for (key in allowed.keys - allowedSeen) {
                 appendLine("note: allowed reference $key is not referenced by this APK")
@@ -190,8 +258,8 @@ abstract class ApiLevelCheckTask : DefaultTask() {
         report.get().asFile.writeText(text)
         if (violations.isNotEmpty()) {
             throw GradleException(
-                "The APK calls platform methods that don't exist at minSdk $min. Avoid them, or add them to " +
-                    "apiLevelCheck.allowed if they are unreachable on older versions:\n$text"
+                "The APK uses platform classes, methods or fields that don't exist at minSdk $min. Avoid them, or " +
+                    "add them to apiLevelCheck.allowed if they are unreachable on older versions:\n$text"
             )
         }
     }
@@ -203,6 +271,7 @@ abstract class ApiLevelCheckTask : DefaultTask() {
             var name: String? = null
             var since = 1
             var methods = HashMap<String, Int>()
+            var fields = HashMap<String, Int>()
             var supers = ArrayList<String>()
 
             override fun startElement(uri: String?, localName: String?, qName: String, attributes: Attributes) {
@@ -211,10 +280,14 @@ abstract class ApiLevelCheckTask : DefaultTask() {
                         name = attributes.getValue("name")
                         since = level(attributes.getValue("since"), 1)
                         methods = HashMap()
+                        fields = HashMap()
                         supers = ArrayList()
                     }
                     "method" -> if (name != null) {
                         methods[attributes.getValue("name")] = level(attributes.getValue("since"), since)
+                    }
+                    "field" -> if (name != null) {
+                        fields[attributes.getValue("name")] = level(attributes.getValue("since"), since)
                     }
                     "extends", "implements" -> if (name != null) supers += attributes.getValue("name")
                 }
@@ -222,7 +295,7 @@ abstract class ApiLevelCheckTask : DefaultTask() {
 
             override fun endElement(uri: String?, localName: String?, qName: String) {
                 if (qName == "class") {
-                    classes[name!!] = ApiClass(since, methods, supers)
+                    classes[name!!] = ApiClass(since, methods, fields, supers)
                     name = null
                 }
             }

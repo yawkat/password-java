@@ -68,8 +68,6 @@ apiLevelCheck {
             "java/beans/*" to "Jackson's optional java.beans support, only used when java.beans exists",
             // kotlinx.coroutines and kotlinx.serialization check whether ClassValue works and fall back otherwise
             "java/lang/ClassValue.<init>()V" to "only used when available",
-            // declared by StringBuilder itself only since API 37, but inherited from AbstractStringBuilder before
-            "java/lang/StringBuilder.getChars(II[CI)V" to "inherited on older versions",
             // the debug agent of kotlinx.coroutines, only loaded as a JVM agent
             "java/lang/instrument/*" to "JVM agent code, never loaded on Android",
             // BouncyCastle's LDAP certificate store; only SCrypt is used
