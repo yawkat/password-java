@@ -23,7 +23,7 @@ sealed interface UiState {
 
     /**
      * @property entries Entries in database order. Entries are compared by identity, as in `PasswordStore`.
-     * @property fromLocalStorage The server was unreachable and the data came from the local copy.
+     * @property fromLocalStorage The data came from the local copy rather than the server (see `PasswordStore.localReason`).
      * @property busy A modification or reload is running. Further modifications are refused until it is done.
      * @property offlineSaveConfirmed The user agreed to overwrite the server copy with the (offline) local copy.
      * @property status Transient status bar message.

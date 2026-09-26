@@ -8,14 +8,35 @@ import lombok.Value;
  */
 @Value
 public class ClientValue<T> {
+    /**
+     * The database, or {@code null} if there is none yet, neither on the server nor locally.
+     */
     @Nullable private final T value;
-    private final boolean fromLocalStorage;
+    /**
+     * Why the value is the local copy rather than the server copy, or {@code null} if it is the server copy.
+     */
+    @Nullable private final LocalReason localReason;
 
-    public <R, E extends Throwable> ClientValue<R> map(ThrowingFunction<T, R, E> function) throws E {
-        return new ClientValue<>(value == null ? null : function.apply(value), fromLocalStorage);
+    public boolean isFromLocalStorage() {
+        return localReason != null;
     }
 
-    public interface ThrowingFunction<T, R, E extends Throwable> {
-        R apply(T obj) throws E;
+    public enum LocalReason {
+        /**
+         * The server could not be reached, or refused access.
+         */
+        SERVER_UNAVAILABLE,
+        /**
+         * The server copy could not be decrypted.
+         */
+        SERVER_COPY_INVALID,
+        /**
+         * The server copy is older than the local copy: someone rolled it back, or our last upload failed.
+         */
+        SERVER_COPY_OLDER,
+        /**
+         * The server has no database (or no registration) yet. The next save uploads.
+         */
+        NOT_ON_SERVER,
     }
 }

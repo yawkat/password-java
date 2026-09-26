@@ -3,8 +3,10 @@ package at.yawk.password.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import at.yawk.password.LocalStorageProvider
+import at.yawk.password.client.ClientValue
 import at.yawk.password.client.PasswordClient
 import at.yawk.password.client.PasswordStore
+import at.yawk.password.client.WrongPasswordException
 import at.yawk.password.model.PasswordEntry
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
@@ -33,7 +35,7 @@ const val BACKGROUND_LOCK_TIMEOUT_MS = 5 * 60 * 1000L
 /**
  * Owns the unlocked [PasswordStore] and exposes the app state as [state].
  *
- * All client calls (scrypt, network, disk) run on [ioDispatcher]. Operations are serialized by a mutex, and while one
+ * All client calls (key derivation, network, disk) run on [ioDispatcher]. Operations are serialized by a mutex, and while one
  * runs the state is marked [UiState.Unlocked.busy] so the UI refuses further modifications.
  *
  * The master password is kept as a byte array only (shared with the [PasswordClient], which needs it to encrypt on
@@ -124,7 +126,7 @@ class PasswordViewModel(
                         pendingClient = client
                         _state.value = UiState.ConfirmCreate(config)
                     } else {
-                        showUnlocked(opened, "${opened.entries.size} entries loaded")
+                        showUnlocked(opened, localCopyStatus(opened) ?: "${opened.entries.size} entries loaded")
                     }
                 } catch (e: Exception) {
                     log.warn("Unlock failed", e)
@@ -304,10 +306,7 @@ class PasswordViewModel(
      */
     fun reload(): Deferred<Boolean> {
         val result = modify(
-            success = { store ->
-                if (store.isFromLocalStorage) "Server unreachable, loaded local copy"
-                else "Reloaded ${store.entries.size} entries"
-            },
+            success = { store -> localCopyStatus(store) ?: "Reloaded ${store.entries.size} entries" },
             busyText = "Reloading…",
             errorTitle = "Reload failed",
             errorText = { "Could not reload the database:\n$it" },
@@ -382,11 +381,25 @@ class PasswordViewModel(
         fun unlockErrorMessage(e: Exception): String {
             val message = e.message ?: e.toString()
             return when {
-                message.startsWith("Invalid HMAC") -> "Wrong password."
+                e is WrongPasswordException -> "Wrong password."
                 message.contains("response code: 403") ->
                     "The server rejected the password, and no local copy could be opened."
+                message.contains("response code: 429") ->
+                    "Too many failed attempts: the server refuses logins for a while. Try again later."
                 else -> "Could not load the database: $message"
             }
+        }
+
+        /**
+         * Why the store shows the local copy, or `null` if it shows the server copy.
+         */
+        fun localCopyStatus(store: PasswordStore): String? = when (store.localReason) {
+            null -> null
+            ClientValue.LocalReason.SERVER_UNAVAILABLE -> "Server unavailable, loaded local copy"
+            ClientValue.LocalReason.SERVER_COPY_INVALID -> "Server copy could not be decrypted, loaded local copy"
+            ClientValue.LocalReason.SERVER_COPY_OLDER ->
+                "Server copy is older than the local copy (a failed upload, or a rollback), loaded local copy"
+            ClientValue.LocalReason.NOT_ON_SERVER -> "Server has no database, loaded local copy. Saving uploads it"
         }
 
         fun saveErrorText(message: String) =

@@ -14,17 +14,17 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Rejects requests to routes annotated with {@link Required} with 403 once the shared secret is set, before their
- * body is read. The controller repeats the check atomically with setting the secret.
+ * Rejects requests to routes annotated with {@link Required} with 403 once the server is registered, before their
+ * body is read. The controller repeats the check atomically with registering.
  *
  * @author yawkat
  */
-@ServerFilter(patterns = { "/shared-secret", "/shared-secret/" })
-@SharedSecretUnsetFilter.Required
-class SharedSecretUnsetFilter extends RouteAnnotationFilter {
+@ServerFilter(patterns = { "/register", "/register/" })
+@UnregisteredFilter.Required
+class UnregisteredFilter extends RouteAnnotationFilter {
     private final DatabaseState state;
 
-    SharedSecretUnsetFilter(DatabaseState state) {
+    UnregisteredFilter(DatabaseState state) {
         super(Required.class);
         this.state = state;
     }
@@ -32,11 +32,11 @@ class SharedSecretUnsetFilter extends RouteAnnotationFilter {
     @Override
     @Nullable
     protected HttpResponse<?> filterRoute(HttpRequest<?> request) throws IOException {
-        return state.isSharedSecretSet() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
+        return state.isRegistered() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
     }
 
     /**
-     * Marks routes that are only allowed while no shared secret is set.
+     * Marks routes that are only allowed while the server is not registered.
      */
     @FilterMatcher
     @Documented

@@ -15,8 +15,8 @@
 -dontwarn com.fasterxml.jackson.databind.ext.**
 -dontwarn java.beans.**
 
-# BouncyCastle is only called directly (SCrypt), so it can be shrunk. Some of its classes refer to JDK APIs that
-# Android lacks (JNDI/LDAP, javax.naming); they are never used here.
+# BouncyCastle is only called directly (Argon2, HKDF, Ed25519, SCrypt), so it can be shrunk. Some of its classes refer
+# to JDK APIs that Android lacks (JNDI/LDAP, javax.naming); they are never used here.
 -dontwarn org.bouncycastle.**
 -dontwarn javax.naming.**
 

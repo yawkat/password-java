@@ -54,7 +54,7 @@ public class StoragePermissionsTest {
 
     @Test
     public void fileProviderCreatesOwnerOnly() throws IOException {
-        Path file = dir.resolve("shared-secret");
+        Path file = dir.resolve("verifier");
         FileLocalStorageProvider provider = new FileLocalStorageProvider(file.toFile());
         provider.save(new byte[]{ 1, 2, 3 });
 
@@ -65,7 +65,7 @@ public class StoragePermissionsTest {
 
     @Test
     public void fileProviderSaveReplacesWorldReadableFile() throws IOException {
-        Path file = worldReadableFile("shared-secret");
+        Path file = worldReadableFile("verifier");
 
         FileLocalStorageProvider provider = new FileLocalStorageProvider(file.toFile());
         provider.save(new byte[]{ 1, 2, 3 });
@@ -76,7 +76,7 @@ public class StoragePermissionsTest {
 
     @Test
     public void fileProviderRestrictPermissionsTightensExistingFile() throws IOException {
-        Path file = worldReadableFile("shared-secret");
+        Path file = worldReadableFile("verifier");
 
         FileLocalStorageProvider provider = new FileLocalStorageProvider(file.toFile());
         provider.restrictPermissions();

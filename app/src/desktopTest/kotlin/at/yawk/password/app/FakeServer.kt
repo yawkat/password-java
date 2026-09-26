@@ -1,17 +1,18 @@
 package at.yawk.password.app
 
-import at.yawk.password.HashUtil
+import at.yawk.password.AuthProtocol
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Minimal in-memory stand-in for the password server that stores `/db` without checking tokens, like the one in the
- * client's `PasswordStoreTest`.
+ * Minimal in-memory stand-in for the password server that stores the registration and `/db` without checking
+ * signatures. The client's tests cover the real server.
  */
 class FakeServer : AutoCloseable {
     val db = AtomicReference<ByteArray?>()
+    val registration = AtomicReference<ByteArray?>()
 
     /** If set, uploads of the database wait for it, like a stuck connection */
     @Volatile
@@ -23,7 +24,11 @@ class FakeServer : AutoCloseable {
             exchange.use {
                 val path = exchange.requestURI.path
                 val body = when {
-                    path == "/challenge" -> HashUtil.generateRandomBytes(32)
+                    path == "/salt" -> registration.get()?.copyOf(AuthProtocol.SALT_RESPONSE_LENGTH)
+                    path == "/register" -> {
+                        registration.set(exchange.requestBody.readAllBytes())
+                        ByteArray(0)
+                    }
                     path == "/db" && exchange.requestMethod == "PUT" -> {
                         uploadGate?.await()
                         db.set(exchange.requestBody.readAllBytes())

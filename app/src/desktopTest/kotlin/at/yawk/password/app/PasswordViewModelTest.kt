@@ -179,7 +179,7 @@ class PasswordViewModelTest {
         // reload falls back to the local copy again and resets the confirmation
         assertTrue(runBlocking { vm.reload().await() })
         val reloaded = vm.awaitIdle()
-        assertEquals("Server unreachable, loaded local copy", reloaded.status?.text)
+        assertEquals("Server unavailable, loaded local copy", reloaded.status?.text)
         assertFalse(reloaded.offlineSaveConfirmed)
     }
 

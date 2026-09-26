@@ -4,17 +4,19 @@ A self-hosted password manager with client-side encryption. The client encrypts 
 derived from the master password and stores the resulting blob on a small HTTP server. The server never sees the
 master password or the plaintext. See [SPEC.md](SPEC.md) for the protocol and the file format.
 
-The server does store a password verifier: the *shared secret*, a cheap scrypt hash of the master password with a
-global salt. Anyone who obtains it, or one challenge and token observed on the wire, can test password guesses offline
-much faster than against the encrypted database itself. See [SPEC.md](SPEC.md#shared-secret) and
-[#8](https://github.com/yawkat/password-java/issues/8).
+One Argon2id run over the master password gives both the encryption keys and a key that signs every request to the
+server. The server only stores the public key. Neither it nor what goes over the wire lets anyone test password
+guesses more cheaply than against the encrypted database itself, and a captured request can't be replayed or reused
+for another request. A new device only needs the URL and the master password. Whoever holds the encrypted database,
+including the server, can still guess passwords offline at the cost of one Argon2id run (64 MiB) per guess: choose a
+strong master password. See [SPEC.md](SPEC.md#security-goals).
 
 ## Modules
 
 | Module   | Contents                                                                                           |
 |----------|----------------------------------------------------------------------------------------------------|
-| `shared` | Local file storage and hashing helpers used by both client and server (Java 17)                    |
-| `client` | Protocol client, encryption (scrypt, AES, HMAC) and the `PasswordStore` model (Java 17)            |
+| `shared` | Protocol constants, local file storage and hashing helpers used by both client and server (Java 17) |
+| `client` | Protocol client, key derivation and encryption (Argon2id, Ed25519, AES-GCM) and the `PasswordStore` model (Java 17) |
 | `server` | The database server, a Micronaut 5 application (Java 25)                                           |
 | `app`    | The GUI, a Compose Multiplatform application built on `client`: the desktop app (`password-gui`) and the Android target |
 | `android`| The Android app, a thin shell around `app`                                                         |
@@ -68,7 +70,7 @@ The data directory contains:
 
 | File                             | Contents                                                                  |
 |----------------------------------|---------------------------------------------------------------------------|
-| `shared-secret`                  | The client credential, set by the first client that connects (see SPEC.md) |
+| `verifier`                       | The registration: install salt and the client's public key, set by the first client that saves (see SPEC.md) |
 | `<timestamp>`, e.g. `2026-09-26T16:54:45.392616657Z` | One encrypted database per upload, named by its ISO-8601 UTC time. Old versions are never deleted. |
 | `latest`                         | Symlink to the newest database file                                        |
 
@@ -76,22 +78,39 @@ Files are created owner-only (`rw-------`). The server logs a warning at startup
 by other users. The data directory must support symlinks: on a file system without them (FAT, some SMB mounts) every
 upload fails, and `latest` is left deleted.
 
-### Enrollment
+### Registration
 
-A fresh server has no `shared-secret`. The first client that connects sets it, unauthenticated, from the master
-password it was given (see [SPEC.md](SPEC.md#client-behaviour)). This happens when the client first *loads* the
-database, before the app asks you to confirm creating a new one. A mistyped master password therefore claims
-the server permanently, and the correct password is rejected from then on.
+A fresh server has no `verifier`. The first client that *saves* to it registers it, unauthenticated, with the master
+password it was given (see [SPEC.md](SPEC.md#client-behaviour)). Loading never registers: on a fresh server the app
+asks you to repeat the master password and create an empty database, and the first entry you add registers the
+server. Other devices then just unlock with the same URL and password.
 
-Enroll right after deploying, before the port is reachable by others (before setting `openFirewall` or exposing it
-through a proxy): open the desktop or Android app with the new server's URL and your master password, and confirm
-creating the database.
+Register right after deploying, before the port is reachable by others (before setting `openFirewall` or exposing it
+through a proxy).
 
-To reset a server, stop it and delete `shared-secret` and `latest` from the data directory. Also delete `latest` in
-each client's `storageDir`, since the client would otherwise fall back to the local copy and fail to decrypt it. The
-next client that connects enrolls again. This is also the only way to change the master password: an existing
-database cannot be re-encrypted, so the new one starts empty. The old timestamped files stay in place, encrypted
-under the old password.
+After 5 failed signatures in a row, the server refuses requests (429) for a second, doubling with every further
+failure up to an hour. This limits online password guessing, at the price that someone who can reach the server can
+keep you out for a while.
+
+To reset a server, stop it and delete `verifier` and `latest` from the data directory. The next client that saves
+registers it again. This is also the only way to change the master password: the client that registers with the new
+password starts with an empty database (or with its local copy, if that is in the new format and it can decrypt it).
+The old timestamped files stay in place, encrypted under the old password.
+
+### Migrating from the old protocol
+
+Servers and clients of the old protocol (shared secret, `/challenge`) don't work with the new ones. To migrate:
+
+1. With the old client, unlock once so that its local copy is current.
+2. Deploy the new server. It keeps the old database files, but ignores them and the `shared-secret`.
+3. Unlock with the new desktop app (same `storageDir`) and the same master password. The server has no registration
+   yet, so the app opens the local copy of the old format ("Server has no database, loaded local copy"). Make any
+   change (e.g. add and delete an entry) and confirm the upload: this registers the server with a new install salt,
+   uploads the database in the new format, and deletes `shared-secret`.
+4. Other devices, e.g. the Android app, just unlock. They fetch the new database and replace their old local copy.
+
+Anyone who can reach the server between steps 2 and 3 can register it first, so do them back to back or keep the
+server unreachable until step 3 is done.
 
 ## Desktop app
 
@@ -137,8 +156,8 @@ install the debug build. `./gradlew build` builds both and runs Android Lint, wh
 API 29 in our code.
 
 Libraries can still call JDK methods that older Android versions lack, which only fails at runtime. The instrumented
-tests in `android/src/androidTest` run the risky parts (Jackson, BouncyCastle's scrypt, the local storage) on a
-device; CI runs them on an API 29 emulator. To run them on a connected device or emulator:
+tests in `android/src/androidTest` run the risky parts (Jackson, BouncyCastle's Argon2id and Ed25519, AES-GCM, the
+local storage) on a device; CI runs them on an API 29 emulator. To run them on a connected device or emulator:
 
 ```sh
 ./gradlew :android:connectedDebugAndroidTest
@@ -185,7 +204,7 @@ nix flake check -L   # builds everything except the Android app, runs the Gradle
 }
 ```
 
-This runs the server as a hardened systemd service `password-server`. Enroll (see [Enrollment](#enrollment)) before
+This runs the server as a hardened systemd service `password-server`. Register (see [Registration](#registration)) before
 setting `openFirewall` or exposing the port. Options under `services.password-server`:
 
 | Option         | Default               | Meaning                                                                   |

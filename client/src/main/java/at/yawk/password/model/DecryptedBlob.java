@@ -8,4 +8,10 @@ import lombok.Data;
 @Data
 public class DecryptedBlob {
     private PasswordBlob data;
+    /**
+     * Incremented on every save. A client refuses to replace its local copy with a remote copy of a lower revision,
+     * so a server can't silently roll the database back to a version older than the one the client has. Legacy
+     * databases have none (0).
+     */
+    private long revision;
 }
