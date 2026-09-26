@@ -11,8 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -21,7 +19,6 @@ import joptsimple.OptionParser;
 import joptsimple.OptionSet;
 import joptsimple.OptionSpec;
 import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
 import lombok.Value;
 import net.jodah.expiringmap.ExpirationPolicy;
 import net.jodah.expiringmap.ExpiringMap;
@@ -99,11 +96,6 @@ public class DatabaseServer {
         }
     }
 
-    @SneakyThrows(NoSuchAlgorithmException.class)
-    private SecureRandom createSecureRandom() {
-        return SecureRandom.getInstance("SHA1PRNG");
-    }
-
     private boolean takeToken(Request request) {
         byte[] token = parseToken(request.headers("X-Auth-Token"));
         return token != null && tokens.remove(new ByteArrayWrapper(token));
@@ -133,7 +125,7 @@ public class DatabaseServer {
 
             byte[] challenge = HashUtil.generateRandomBytes(32);
 
-            byte[] token = HashUtil.sha256(sharedSecret, challenge);
+            byte[] token = HashUtil.sha512(sharedSecret, challenge);
             tokens.add(new ByteArrayWrapper(token));
 
             return challenge;
