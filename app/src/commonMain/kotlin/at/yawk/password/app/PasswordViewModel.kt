@@ -63,6 +63,11 @@ class PasswordViewModel(
     /** Client waiting for [confirmCreate] */
     private var pendingClient: PasswordClient? = null
 
+    /**
+     * Incremented by [lockNow]. An operation that was started in an earlier session discards its result.
+     */
+    private var session = 0L
+
     /** [clock] time when the app went to the background, or `null` while it is in the foreground */
     private var backgroundSince: Long? = null
     private var backgroundLock: Job? = null
@@ -90,12 +95,18 @@ class PasswordViewModel(
         val bytes = encodePassword(password)
         val config = locked.config.copy(url = url.trim().ifEmpty { locked.config.url })
         _state.value = UiState.Unlocking(config)
+        val unlockSession = session
         viewModelScope.launch {
             mutex.withLock {
                 try {
                     val (client, opened) = withContext(ioDispatcher) {
                         val client = clientFactory(config.url, platform.openStorage(config), bytes)
                         client to PasswordStore.open(client)
+                    }
+                    if (session != unlockSession) {
+                        // locked meanwhile
+                        bytes.wipe()
+                        return@withLock
                     }
                     this@PasswordViewModel.password = bytes
                     this@PasswordViewModel.config = config
@@ -110,7 +121,9 @@ class PasswordViewModel(
                 } catch (e: Exception) {
                     log.warn("Unlock failed", e)
                     bytes.wipe()
-                    _state.value = UiState.Locked(config, unlockErrorMessage(e))
+                    if (session == unlockSession) {
+                        _state.value = UiState.Locked(config, unlockErrorMessage(e))
+                    }
                 }
             }
         }
@@ -150,14 +163,7 @@ class PasswordViewModel(
         if (unlocked.busy) {
             return
         }
-        _state.value = unlocked.copy(busy = true)
-        viewModelScope.launch {
-            mutex.withLock {
-                store = null
-                wipePassword()
-                _state.value = UiState.Locked(config!!)
-            }
-        }
+        lockNow()
     }
 
     /**
@@ -170,14 +176,14 @@ class PasswordViewModel(
         backgroundSince = clock()
         backgroundLock = viewModelScope.launch {
             delay(backgroundLockTimeoutMs)
-            lockWhenIdle()
+            lockNow()
         }
     }
 
     /**
      * The app is in the foreground again. If it was away for [backgroundLockTimeoutMs] or longer, lock now: the timer
-     * of [onBackground] may not have run while the process was frozen or the device was asleep. This locks right away
-     * (before anything is drawn) unless an operation is still running.
+     * of [onBackground] may not have run while the process was frozen or the device was asleep. This locks right away,
+     * before anything is drawn.
      */
     fun onForeground() {
         val since = backgroundSince ?: return
@@ -185,26 +191,40 @@ class PasswordViewModel(
         backgroundLock?.cancel()
         backgroundLock = null
         if (clock() - since >= backgroundLockTimeoutMs) {
-            lockWhenIdle()
+            lockNow()
         }
     }
 
     /**
-     * Lock as soon as a running operation (unlocking, saving, reloading) has finished, also discarding an offered
+     * Lock right away, also while unlocking or while an operation (saving, reloading) runs, and discard an offered
      * database creation. Unlike [lock], this never refuses.
+     *
+     * A running operation can't be interrupted (it may be stuck in a network request until that times out). It goes
+     * on in the background, and its result is discarded. It still needs the master password (to encrypt what it
+     * saves), so the password is wiped once the operation is done; right away if none runs.
      */
-    fun lockWhenIdle() {
-        viewModelScope.launch {
-            // the mutex is fair, so this runs after any operation that has already been started
-            mutex.withLock {
-                val config = config ?: return@withLock
-                if (_state.value is UiState.Unlocked || _state.value is UiState.ConfirmCreate) {
-                    store = null
-                    pendingClient = null
-                    wipePassword()
-                    _state.value = UiState.Locked(config)
-                }
+    fun lockNow() {
+        val config = when (val s = _state.value) {
+            is UiState.Unlocking -> s.config
+            is UiState.ConfirmCreate -> s.config
+            is UiState.Unlocked -> config ?: return
+            else -> return
+        }
+        session++
+        store = null
+        pendingClient = null
+        val password = password
+        this.password = null
+        _state.value = UiState.Locked(config)
+        if (mutex.tryLock()) {
+            try {
+                password?.wipe()
+            } finally {
+                mutex.unlock()
             }
+        } else {
+            // the mutex is fair, so this runs after the running operation
+            viewModelScope.launch { mutex.withLock { password?.wipe() } }
         }
     }
 
@@ -300,10 +320,15 @@ class PasswordViewModel(
             return viewModelScope.async { null }
         }
         _state.value = unlocked.copy(busy = true, status = StatusMessage(busyText), error = null)
+        val operationSession = session
         return viewModelScope.async {
             mutex.withLock {
                 try {
                     val result = withContext(ioDispatcher) { operation(store) }
+                    if (session != operationSession) {
+                        // locked meanwhile
+                        return@withLock null
+                    }
                     updateUnlocked {
                         it.copy(
                             entries = store.entries,
@@ -316,6 +341,9 @@ class PasswordViewModel(
                     result
                 } catch (e: Exception) {
                     log.warn("$errorTitle", e)
+                    if (session != operationSession) {
+                        return@withLock null
+                    }
                     updateUnlocked {
                         it.copy(busy = false, status = null, error = ErrorMessage(errorTitle, errorText(e.message ?: e.toString())))
                     }

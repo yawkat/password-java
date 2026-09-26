@@ -140,7 +140,8 @@ fun MainScreen(
     }
 
     fun copy(entry: PasswordEntry?, full: Boolean) {
-        if (entry == null || ui.editing) return
+        // the database may have been locked (e.g. in the background) before this composition is gone
+        if (entry == null || ui.editing || viewModel.state.value !is UiState.Unlocked) return
         viewModel.showStatus(copyEntry(clipboard, entry, full))
     }
 
@@ -337,7 +338,7 @@ fun MainScreen(
                         idle = idle,
                         revealed = ui.revealed,
                         onCopy = { copy(detail, full = it) },
-                        onReveal = { ui.revealed = !ui.revealed },
+                        onReveal = { if (viewModel.state.value is UiState.Unlocked) ui.revealed = !ui.revealed },
                         onEdit = ::editEntry,
                         onDelete = ::deleteEntry,
                         modifier = Modifier.weight(1f),

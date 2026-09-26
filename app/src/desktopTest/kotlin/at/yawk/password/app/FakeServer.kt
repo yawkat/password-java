@@ -3,6 +3,7 @@ package at.yawk.password.app
 import at.yawk.password.HashUtil
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -11,6 +12,10 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class FakeServer : AutoCloseable {
     val db = AtomicReference<ByteArray?>()
+
+    /** If set, uploads of the database wait for it, like a stuck connection */
+    @Volatile
+    var uploadGate: CountDownLatch? = null
     private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 
     init {
@@ -20,6 +25,7 @@ class FakeServer : AutoCloseable {
                 val body = when {
                     path == "/challenge" -> HashUtil.generateRandomBytes(32)
                     path == "/db" && exchange.requestMethod == "PUT" -> {
+                        uploadGate?.await()
                         db.set(exchange.requestBody.readAllBytes())
                         ByteArray(0)
                     }

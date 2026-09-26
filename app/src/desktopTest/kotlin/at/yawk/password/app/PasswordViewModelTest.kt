@@ -202,36 +202,69 @@ class PasswordViewModelTest {
         assertEquals(listOf("a"), vm.awaitIdle().entries.map { it.name })
     }
 
-    @Test
-    fun lockWhenIdleWaitsForRunningOperation() {
-        val vm = newViewModel()
-        vm.await<UiState.Locked>()
-        // nothing to lock yet
-        vm.lockWhenIdle()
-        vm.unlock(server.url, "secret")
-        vm.await<UiState.ConfirmCreate>()
-        vm.confirmCreate("secret")
-        vm.await<UiState.Unlocked>()
-        val sessionPassword = passwords.last()
-
-        // unlike lock(), this is not refused while saving, but waits for the save to finish
-        val save = vm.save(null, "a", "1")
-        vm.lockWhenIdle()
-        assertNotNull(runBlocking { save.await() })
-        assertEquals(server.url, vm.await<UiState.Locked>().config.url)
-        assertNotNull(server.db.get(), "the save went through")
-        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped")
+    private fun eventually(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 120_000
+        while (!condition()) {
+            assertTrue(System.currentTimeMillis() < deadline, "timed out")
+            Thread.sleep(20)
+        }
     }
 
     @Test
-    fun lockWhenIdleDiscardsCreation() {
+    fun lockNowDoesNotWaitForStuckOperation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        // nothing to lock yet
+        vm.lockNow()
+        assertTrue(vm.state.value is UiState.Locked)
+        unlockedEmpty(vm)
+        val sessionPassword = passwords.last()
+
+        // the upload hangs
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val save = vm.save(null, "a", "1")
+        Thread.sleep(500)
+        vm.lockNow()
+        // locked right away, unlike lock(), which is refused while saving
+        assertEquals(server.url, (vm.state.value as UiState.Locked).config.url)
+        // the save still needs the password
+        assertFalse(sessionPassword.all { it == 0.toByte() }, "password in use")
+
+        gate.countDown()
+        // the save finishes (it can't be interrupted), but its result is discarded
+        assertNull(runBlocking { save.await() })
+        assertNotNull(server.db.get(), "the save went through")
+        assertTrue(vm.state.value is UiState.Locked)
+        eventually { sessionPassword.all { it == 0.toByte() } }
+    }
+
+    @Test
+    fun lockNowWhileUnlocking() {
         val vm = newViewModel()
         vm.await<UiState.Locked>()
         vm.unlock(server.url, "secret")
-        // called while unlocking: takes effect once the unlock is done
-        vm.lockWhenIdle()
+        vm.lockNow()
+        assertTrue(vm.state.value is UiState.Locked)
+        // the unlock finishes in the background without showing anything, and wipes its password
+        eventually { passwords.isNotEmpty() && passwords.last().all { it == 0.toByte() } }
+        Thread.sleep(200)
+        assertEquals(UiState.Locked(AppConfig(server.url, "/nonexistent")), vm.state.value)
+        assertNull(server.db.get())
+    }
+
+    @Test
+    fun lockNowDiscardsCreation() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.await<UiState.ConfirmCreate>()
+        vm.lockNow()
         vm.await<UiState.Locked>()
         assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped")
+        // not usable anymore
+        vm.confirmCreate("secret")
+        assertTrue(vm.state.value is UiState.Locked)
         assertNull(server.db.get())
     }
 
