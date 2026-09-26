@@ -1,0 +1,23 @@
+[versions]
+jackson = "3.2.3"
+lombok = "1.18.48"
+slf4j = "2.0.20"
+# must match the minor version of the system Qt 6 installation (nixpkgs qt6.qtbase)
+qtjambi = "6.11.2"
+
+[libraries]
+jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
+jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.1.0" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+testng = { module = "org.testng:testng", version = "7.12.0" }
+scrypt = { module = "com.lambdaworks:scrypt", version = "1.4.0" }
+jopt-simple = { module = "net.sf.jopt-simple:jopt-simple", version = "5.0.4" }
+spark-core = { module = "com.sparkjava:spark-core", version = "2.9.4" }
+expiringmap = { module = "net.jodah:expiringmap", version = "0.5.11" }
+qtjambi = { module = "io.qtjambi:qtjambi", version.ref = "qtjambi" }
+qtjambi-native-linux-x64 = { module = "io.qtjambi:qtjambi-native-linux-x64", version.ref = "qtjambi" }
+
+[plugins]
+lombok = { id = "io.freefair.lombok", version = "9.7.0" }
+shadow = { id = "com.gradleup.shadow", version = "9.6.1" }
