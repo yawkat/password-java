@@ -10,6 +10,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.app.AndroidPlatform
+import at.yawk.password.app.AndroidSecretClipboard
 import at.yawk.password.app.App
 import at.yawk.password.app.PasswordViewModel
 import at.yawk.password.app.WindowHooks
@@ -30,7 +31,7 @@ class MainActivity : ComponentActivity() {
         // no screenshots, screen recordings or recents thumbnails of the passwords
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
-        val clipboard = (application as PasswordApplication).clipboard
+        val clipboard = AndroidSecretClipboard.get(this)
         setContent {
             App(viewModel, clipboard, hooks, onExit = ::finish, touchInput = true)
         }

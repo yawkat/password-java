@@ -6,7 +6,6 @@
     <!-- No backups or device transfers: the local copy is encrypted, but the settings and the copy don't need to
          leave the device, and restoring them makes little sense. -->
     <application
-        android:name=".PasswordApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -24,6 +23,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- clears the clipboard 30 s after a copy (AndroidSecretClipboard); only the app's own alarm sends it -->
+        <receiver
+            android:name="at.yawk.password.app.ClipboardClearReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

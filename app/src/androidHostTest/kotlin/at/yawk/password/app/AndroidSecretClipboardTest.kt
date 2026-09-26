@@ -28,19 +28,20 @@ class AndroidSecretClipboardTest {
         }
     }
 
-    private class FakeScheduler : AndroidSecretClipboard.Scheduler {
-        val pending = mutableListOf<Pair<Long, () -> Unit>>()
+    /** Like the alarm: one pending schedule at most, a new one replaces it */
+    private inner class FakeScheduler : AndroidSecretClipboard.Scheduler {
+        var pending: Long? = null
 
-        override fun schedule(delayMillis: Long, task: () -> Unit): () -> Unit {
-            val entry = delayMillis to task
-            pending += entry
-            return { pending.remove(entry) }
+        override fun schedule(delayMillis: Long): () -> Unit {
+            pending = delayMillis
+            return { pending = null }
         }
 
         fun runAll() {
-            val tasks = pending.toList()
-            pending.clear()
-            tasks.forEach { it.second() }
+            if (pending != null) {
+                pending = null
+                secretClipboard.onTimer()
+            }
         }
     }
 
@@ -53,7 +54,7 @@ class AndroidSecretClipboardTest {
         assertTrue(secretClipboard.copySecret("secret"))
         assertEquals("secret", clipboard.text)
         assertTrue(clipboard.sensitive)
-        assertEquals(listOf(30_000L), scheduler.pending.map { it.first })
+        assertEquals(30_000L, scheduler.pending)
         scheduler.runAll()
         assertNull(clipboard.text)
     }
@@ -79,7 +80,7 @@ class AndroidSecretClipboardTest {
     fun newCopyRestartsTimer() {
         secretClipboard.copySecret("a")
         secretClipboard.copySecret("b")
-        assertEquals(1, scheduler.pending.size)
+        assertEquals(30_000L, scheduler.pending)
         scheduler.runAll()
         assertNull(clipboard.text)
     }
@@ -89,7 +90,7 @@ class AndroidSecretClipboardTest {
         secretClipboard.copySecret("secret")
         secretClipboard.clearIfOurs()
         assertNull(clipboard.text)
-        assertTrue(scheduler.pending.isEmpty())
+        assertNull(scheduler.pending)
         // nothing of ours left: later contents stay
         clipboard.text = "other"
         clipboard.readable = false
@@ -101,6 +102,19 @@ class AndroidSecretClipboardTest {
     fun failedCopy() {
         clipboard.failWrites = true
         assertFalse(secretClipboard.copySecret("secret"))
-        assertTrue(scheduler.pending.isEmpty())
+        assertNull(scheduler.pending)
+    }
+
+    @Test
+    fun timerAfterProcessRestart() {
+        // a new process gets the alarm of the old one: clear what can't be checked, keep what can
+        val restarted = AndroidSecretClipboard(clipboard, scheduler)
+        clipboard.text = "secret"
+        clipboard.readable = true
+        restarted.onTimer()
+        assertEquals("secret", clipboard.text)
+        clipboard.readable = false
+        restarted.onTimer()
+        assertNull(clipboard.text)
     }
 }
