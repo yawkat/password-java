@@ -4,7 +4,13 @@ import at.yawk.password.FileLocalStorageProvider;
 import at.yawk.password.HashUtil;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.MultiFileLocalStorageProvider;
+import at.yawk.password.PlatformDependent;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Collections;
@@ -34,7 +40,7 @@ public class DatabaseServer {
                     .expiration(1, TimeUnit.MINUTES)
                     .build());
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         OptionParser parser = new OptionParser();
         OptionSpec<File> directory = parser.accepts("d")
                 .withRequiredArg()
@@ -48,10 +54,34 @@ public class DatabaseServer {
 
         Spark.port(port.value(set));
 
+        File dataDirectory = directory.value(set);
+        warnIfAccessibleByOthers(dataDirectory.toPath());
+
+        FileLocalStorageProvider sharedSecretStorageProvider =
+                new FileLocalStorageProvider(new File(dataDirectory, "shared-secret"));
+        sharedSecretStorageProvider.restrictPermissions();
+
         new DatabaseServer(
-                new MultiFileLocalStorageProvider(directory.value(set)),
-                new FileLocalStorageProvider(new File(directory.value(set), "shared-secret"))
+                new MultiFileLocalStorageProvider(dataDirectory),
+                sharedSecretStorageProvider
         ).start();
+    }
+
+    private static void warnIfAccessibleByOthers(Path dir) {
+        if (!Files.isDirectory(dir) || !PlatformDependent.isPosix(dir)) {
+            return;
+        }
+        Set<PosixFilePermission> perms;
+        try {
+            perms = Files.getPosixFilePermissions(dir);
+        } catch (IOException e) {
+            // only a warning, never fail startup
+            return;
+        }
+        if (!perms.stream().allMatch(p -> p.name().startsWith("OWNER_"))) {
+            System.err.println("Warning: data directory " + dir.toAbsolutePath() + " is accessible by other users ("
+                               + PosixFilePermissions.toString(perms) + "), consider chmod 700");
+        }
     }
 
     @SneakyThrows(NoSuchAlgorithmException.class)

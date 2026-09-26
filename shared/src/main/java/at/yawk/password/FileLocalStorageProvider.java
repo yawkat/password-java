@@ -13,8 +13,16 @@ public class FileLocalStorageProvider implements LocalStorageProvider {
 
     @Override
     public void save(byte[] data) throws IOException {
-        try (FileOutputStream stream = new FileOutputStream(path)) {
-            stream.write(data);
+        PlatformDependent.writeOwnerOnlyAtomically(path, data);
+    }
+
+    /**
+     * Restrict the permissions of the storage file to the owner, if it exists. Useful on startup to fix files that
+     * were created with looser permissions.
+     */
+    public void restrictPermissions() throws IOException {
+        if (path.exists()) {
+            PlatformDependent.setOwnerOnlyPermissions(path);
         }
     }
 
