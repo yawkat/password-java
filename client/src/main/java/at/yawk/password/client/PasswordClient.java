@@ -33,9 +33,16 @@ public class PasswordClient {
      */
     private final List<KeyMaterial> derivedKeys = new ArrayList<>();
     /**
-     * The keys that {@link #save} encrypts and signs with, chosen by {@link #load}.
+     * The keys that {@link #save} encrypts and signs with, chosen by {@link #load}. {@code null} if nothing was loaded,
+     * or if the server was unreachable and the local copy doesn't tell the install salt either (a legacy copy).
      */
     @Nullable private KeyMaterial keys;
+    /**
+     * Whether {@link #keys} were chosen knowing the server state: the server's install salt, or the salt to register.
+     * Otherwise they are those of the local copy, assumed to be the server's.
+     */
+    private boolean keysFromServer;
+    private boolean loaded;
     /**
      * {@code false} if the last {@link #load} found the server without registration, so that {@link #save} registers
      * {@link #keys} first. It is only registered on save, never on load: that would claim a server just because its
@@ -69,13 +76,15 @@ public class PasswordClient {
                 byte[] localSalt = local == null ? null : BlobCodec.installSalt(local);
                 if (localSalt != null) {
                     keys = keysFor(localSalt);
-                } else if (keys == null) {
+                } else if (keys == null || !keysFromServer) {
                     keys = keysFor(HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH));
                 }
+                keysFromServer = true;
                 remote = null;
             } else {
                 registered = true;
                 keys = keysFor(installSalt);
+                keysFromServer = true;
                 try {
                     remote = databaseClient.getDatabase(keys);
                 } catch (FileNotFoundException e) {
@@ -87,19 +96,20 @@ public class PasswordClient {
             if (local == null) {
                 throw e;
             }
-            // the server state is unknown: keep writing with the keys of the local copy, but don't register
-            registered = true;
-            byte[] localSalt = BlobCodec.installSalt(local);
-            if (localSalt != null) {
-                keys = keysFor(localSalt);
-            } else if (keys == null) {
-                keys = keysFor(HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH));
+            DecryptedBlob localBlob = decryptLocal(local);
+            if (!keysFromServer) {
+                // Nothing is known about the server: assume the local copy's registration, but never register. A
+                // legacy copy has none, so it can only be saved once the server is reachable.
+                registered = true;
+                byte[] localSalt = BlobCodec.installSalt(local);
+                keys = localSalt == null ? null : keysFor(localSalt);
             }
-            return loaded(decryptLocal(local), ClientValue.LocalReason.SERVER_UNAVAILABLE);
+            return loaded(localBlob, ClientValue.LocalReason.SERVER_UNAVAILABLE);
         }
 
         if (remote == null) {
             if (local == null) {
+                loaded = true;
                 revision = 0;
                 return new ClientValue<>(null, ClientValue.LocalReason.NOT_ON_SERVER);
             }
@@ -147,6 +157,7 @@ public class PasswordClient {
     }
 
     private ClientValue<PasswordBlob> loaded(DecryptedBlob blob, @Nullable ClientValue.LocalReason reason) {
+        loaded = true;
         revision = blob.getRevision();
         return new ClientValue<>(blob.getData(), reason);
     }
@@ -181,9 +192,13 @@ public class PasswordClient {
      * @throws IllegalStateException if nothing was loaded yet
      */
     public void save(PasswordBlob blob) throws Exception {
+        if (!loaded) {
+            throw new IllegalStateException("Load the database before saving");
+        }
         KeyMaterial keys = this.keys;
         if (keys == null) {
-            throw new IllegalStateException("Load the database before saving");
+            throw new IOException("The server was unreachable, and the local copy is in the old format. Reload once " +
+                                  "the server is reachable, then save to migrate it.");
         }
         DecryptedBlob decrypted = new DecryptedBlob();
         decrypted.setData(blob);

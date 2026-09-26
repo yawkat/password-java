@@ -130,6 +130,17 @@ public class DatabaseControllerTest {
         Assert.assertEquals(getDbBody(), db);
     }
 
+    /**
+     * A migrated server still has the database of the old protocol in its data directory. It must not be served to
+     * whoever registers first.
+     */
+    @Test
+    public void testLegacyDatabaseIsNotServed() throws Exception {
+        java.nio.file.Files.write(server.getDataDirectory().resolve("latest"), new byte[1000]);
+        register();
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
+    }
+
     @Test
     public void testInvalidDatabase() throws Exception {
         register();

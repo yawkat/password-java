@@ -1144,10 +1144,6 @@
    "jar": "sha256-99yYBi/M8UEmq7dRtk+rEsMSVm6MvchINZi//OqTr3w=",
    "pom": "sha256-5/1yMuljB6V1sklMk2fWjPQ+yYJEqs48zCPhdz/6b9o="
   },
-  "net/jodah#expiringmap/0.5.11": {
-   "jar": "sha256-wOWgbyHs7sLXP2V08Lv9RIhT0Hy1uwvatYcyLRoLcuo=",
-   "pom": "sha256-L20qv5ByGwOeZW8Cs0Ss6XZHGH2+JfuQMLtkkh3ZtL0="
-  },
   "net/sf/jopt-simple#jopt-simple/5.0.4": {
    "jar": "sha256-3ybMWPI19HfbB/dTulo6skPr5Xidn4ns9o3WLqmmbCg=",
    "pom": "sha256-amd2O3avzZyAuV5cXiR4LRjMGw49m0VK0/h1THa3aBU="

@@ -4,7 +4,6 @@ import at.yawk.password.AuthProtocol;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 import org.testng.Assert;
@@ -30,15 +29,31 @@ public class DatabaseStateTest {
     }
 
     @Test
-    public void testNonceSetIsBounded() {
-        Set<Integer> nonces = DatabaseState.createNonceSet();
-        for (int i = 0; i < DatabaseState.MAX_REMEMBERED_NONCES + 100; i++) {
-            nonces.add(i);
-        }
-        Assert.assertEquals(nonces.size(), DatabaseState.MAX_REMEMBERED_NONCES);
-        // oldest entries are evicted first, newest are kept
-        Assert.assertFalse(nonces.contains(0));
-        Assert.assertTrue(nonces.contains(DatabaseState.MAX_REMEMBERED_NONCES + 99));
+    public void testNonceMemory() {
+        NonceMemory nonces = new NonceMemory(3, 60_000);
+        long now = 1_000_000;
+        nonces.add("a", now - 30_000, now);
+        nonces.add("b", now + 40_000, now);
+        Assert.assertTrue(nonces.contains("a"));
+
+        // kept exactly as long as their requests are fresh, however much time has passed since they were added
+        now += 30_000;
+        nonces.add("c", now, now);
+        Assert.assertTrue(nonces.contains("a"));
+        now += 1;
+        nonces.add("d", now, now);
+        Assert.assertFalse(nonces.contains("a"));
+        Assert.assertTrue(nonces.contains("b"));
+
+        // a clock that goes back forgets nothing
+        now -= 1_000_000;
+        nonces.add("e", now, now);
+        Assert.assertEquals(nonces.size(), 3);
+        // full: the nonce closest to expiry (the oldest timestamp) goes first
+        Assert.assertFalse(nonces.contains("c"));
+        Assert.assertTrue(nonces.contains("b"));
+        Assert.assertTrue(nonces.contains("d"));
+        Assert.assertTrue(nonces.contains("e"));
     }
 
     @Test
@@ -79,25 +94,54 @@ public class DatabaseStateTest {
         for (int i = 0; i < DatabaseState.FREE_FAILURES; i++) {
             DatabaseState.AuthHeader header =
                     DatabaseState.parseAuthHeader(other.header(now.get(), "GET", "/db", new byte[0]));
-            Assert.assertEquals(state.preCheck(header), DatabaseState.PreCheck.OK);
-            Assert.assertFalse(state.verify(header, "GET", "/db", new byte[0]));
+            Assert.assertEquals(state.preCheck(header), DatabaseState.Verdict.OK);
+            Assert.assertEquals(state.verify(header, "GET", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
         }
         // 1 s after the 5th failure, then doubling
         DatabaseState.AuthHeader good = DatabaseState.parseAuthHeader(auth.header(now.get(), "GET", "/db", new byte[0]));
-        Assert.assertEquals(state.preCheck(good), DatabaseState.PreCheck.BACKOFF);
+        Assert.assertEquals(state.preCheck(good), DatabaseState.Verdict.BACKOFF);
         now.addAndGet(1000);
         DatabaseState.AuthHeader bad = DatabaseState.parseAuthHeader(other.header(now.get(), "GET", "/db", new byte[0]));
-        Assert.assertFalse(state.verify(bad, "GET", "/db", new byte[0]));
+        Assert.assertEquals(state.verify(bad, "GET", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
         now.addAndGet(1999);
-        Assert.assertEquals(state.preCheck(good), DatabaseState.PreCheck.BACKOFF);
+        Assert.assertEquals(state.preCheck(good), DatabaseState.Verdict.BACKOFF);
         now.addAndGet(1);
         good = DatabaseState.parseAuthHeader(auth.header(now.get(), "GET", "/db", new byte[0]));
-        Assert.assertTrue(state.verify(good, "GET", "/db", new byte[0]));
+        Assert.assertEquals(state.verify(good, "GET", "/db", new byte[0]), DatabaseState.Verdict.OK);
         // success resets the count
         bad = DatabaseState.parseAuthHeader(other.header(now.get(), "GET", "/db", new byte[0]));
-        Assert.assertFalse(state.verify(bad, "GET", "/db", new byte[0]));
+        Assert.assertEquals(state.verify(bad, "GET", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
         good = DatabaseState.parseAuthHeader(auth.header(now.get(), "GET", "/db", new byte[0]));
-        Assert.assertEquals(state.preCheck(good), DatabaseState.PreCheck.OK);
+        Assert.assertEquals(state.preCheck(good), DatabaseState.Verdict.OK);
+    }
+
+    @Test
+    public void testSlowBody() throws Exception {
+        DatabaseState state = new DatabaseState(dir.toString());
+        AtomicLong now = new AtomicLong(1_000_000_000L);
+        state.clock = now::get;
+        ServerAuth auth = new ServerAuth();
+        Assert.assertTrue(state.registerIfUnregistered(auth.registration()));
+
+        // the body took 90 s to arrive: still fine
+        DatabaseState.AuthHeader slow = DatabaseState.parseAuthHeader(auth.header(now.get(), "PUT", "/db", new byte[0]));
+        Assert.assertEquals(state.preCheck(slow), DatabaseState.Verdict.OK);
+        now.addAndGet(90_000);
+        Assert.assertEquals(state.verify(slow, "PUT", "/db", new byte[0]), DatabaseState.Verdict.OK);
+        // and its nonce is still remembered, while a replay of it could complete
+        Assert.assertEquals(state.verify(slow, "PUT", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
+
+        // too slow: stale, so the client can retry
+        DatabaseState.AuthHeader tooSlow =
+                DatabaseState.parseAuthHeader(auth.header(now.get(), "PUT", "/db", new byte[0]));
+        now.addAndGet(DatabaseState.MAX_REQUEST_AGE_MILLIS + 1);
+        Assert.assertEquals(state.verify(tooSlow, "PUT", "/db", new byte[0]), DatabaseState.Verdict.STALE);
+    }
+
+    @Test
+    public void testInvalidRegistrationFailsStartup() throws Exception {
+        Files.write(dir.resolve("verifier"), new byte[10]);
+        Assert.assertThrows(java.io.IOException.class, () -> new DatabaseState(dir.toString()));
     }
 
     @Test
@@ -111,8 +155,8 @@ public class DatabaseStateTest {
             now.addAndGet(DatabaseState.MAX_BACKOFF_MILLIS);
             DatabaseState.AuthHeader bad =
                     DatabaseState.parseAuthHeader(other.header(now.get(), "GET", "/db", new byte[0]));
-            Assert.assertEquals(state.preCheck(bad), DatabaseState.PreCheck.OK, "attempt " + i);
-            Assert.assertFalse(state.verify(bad, "GET", "/db", new byte[0]));
+            Assert.assertEquals(state.preCheck(bad), DatabaseState.Verdict.OK, "attempt " + i);
+            Assert.assertEquals(state.verify(bad, "GET", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
         }
     }
 }

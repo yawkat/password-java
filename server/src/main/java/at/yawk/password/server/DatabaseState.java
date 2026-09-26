@@ -21,14 +21,11 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
-import net.jodah.expiringmap.ExpirationPolicy;
-import net.jodah.expiringmap.ExpiringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,9 +47,13 @@ public class DatabaseState {
 
     /**
      * Upper bound on remembered nonces. Only requests with a valid signature add one, so only the owner can fill it.
-     * If more than this many requests arrive within the replay window, the oldest nonces are forgotten early.
      */
     static final int MAX_REMEMBERED_NONCES = 10_000;
+    /**
+     * How old a request may be once its body has been read and its signature is checked. Nonces are remembered for
+     * as long, so a replay can't complete after the original was forgotten.
+     */
+    static final long MAX_REQUEST_AGE_MILLIS = 2 * AuthProtocol.MAX_CLOCK_SKEW_MILLIS;
 
     /**
      * Number of failed signatures in a row that are allowed before the backoff starts.
@@ -70,7 +71,14 @@ public class DatabaseState {
     private final LocalStorageProvider databaseStorageProvider;
     private final FileLocalStorageProvider registrationStorageProvider;
     private final File legacySharedSecret;
-    private final Set<String> nonces = createNonceSet();
+    private final NonceMemory nonces = new NonceMemory(MAX_REMEMBERED_NONCES, MAX_REQUEST_AGE_MILLIS);
+    /**
+     * The registration file, which never changes once written. The operator resets a server while it is stopped.
+     */
+    /**
+     * The registration ({@link AuthProtocol#REGISTRATION_LENGTH} bytes), or {@code null} if there is none.
+     */
+    @Nullable private volatile byte[] registration;
     LongSupplier clock = System::currentTimeMillis;
 
     private int consecutiveFailures = 0;
@@ -83,23 +91,22 @@ public class DatabaseState {
 
         registrationStorageProvider = new FileLocalStorageProvider(new File(dir, "verifier"));
         registrationStorageProvider.restrictPermissions();
+        registration = registrationStorageProvider.load();
+        if (registration != null) {
+            try {
+                checkRegistration(registration);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("Invalid registration file " + new File(dir, "verifier") +
+                                      ", delete it to register again", e);
+            }
+        }
         databaseStorageProvider = new MultiFileLocalStorageProvider(dir);
 
         legacySharedSecret = new File(dir, "shared-secret");
-        if (legacySharedSecret.exists() && registrationStorageProvider.load() == null) {
+        if (legacySharedSecret.exists() && registration == null) {
             log.warn("Found the shared secret of the old protocol but no registration. Migrate by unlocking with the " +
                      "new client, see the README; the old secret is deleted on registration.");
         }
-    }
-
-    static <T> Set<T> createNonceSet() {
-        return Collections.newSetFromMap(
-                ExpiringMap.builder()
-                        // a request is valid for MAX_CLOCK_SKEW on either side of its timestamp
-                        .expiration(2 * AuthProtocol.MAX_CLOCK_SKEW_MILLIS, TimeUnit.MILLISECONDS)
-                        .expirationPolicy(ExpirationPolicy.CREATED)
-                        .maxSize(MAX_REMEMBERED_NONCES)
-                        .build());
     }
 
     private static void warnIfAccessibleByOthers(Path dir) {
@@ -119,24 +126,16 @@ public class DatabaseState {
         }
     }
 
-    /**
-     * @return The registration ({@link AuthProtocol#REGISTRATION_LENGTH} bytes), or {@code null} if there is none.
-     */
-    @Nullable
-    private byte[] loadRegistration() throws IOException {
-        return registrationStorageProvider.load();
-    }
-
-    boolean isRegistered() throws IOException {
-        return loadRegistration() != null;
+    boolean isRegistered() {
+        return registration != null;
     }
 
     /**
      * @return The {@code GET /salt} response, or {@code null} if there is no registration.
      */
     @Nullable
-    byte[] getSaltResponse() throws IOException {
-        byte[] registration = loadRegistration();
+    byte[] getSaltResponse() {
+        byte[] registration = this.registration;
         return registration == null ? null : Arrays.copyOf(registration, AuthProtocol.SALT_RESPONSE_LENGTH);
     }
 
@@ -147,6 +146,22 @@ public class DatabaseState {
      * @throws IllegalArgumentException if the registration is malformed
      */
     synchronized boolean registerIfUnregistered(byte[] registration) throws IOException {
+        checkRegistration(registration);
+        if (isRegistered()) {
+            return false;
+        }
+        registrationStorageProvider.save(registration);
+        this.registration = registration.clone();
+        if (legacySharedSecret.delete()) {
+            log.info("Deleted the shared secret of the old protocol");
+        }
+        return true;
+    }
+
+    /**
+     * @throws IllegalArgumentException if the registration is malformed
+     */
+    private static void checkRegistration(byte[] registration) {
         if (registration.length != AuthProtocol.REGISTRATION_LENGTH || registration[0] != AuthProtocol.VERSION) {
             throw new IllegalArgumentException("Malformed registration");
         }
@@ -155,14 +170,6 @@ public class DatabaseState {
         } catch (GeneralSecurityException e) {
             throw new IllegalArgumentException("Malformed public key", e);
         }
-        if (isRegistered()) {
-            return false;
-        }
-        registrationStorageProvider.save(registration);
-        if (legacySharedSecret.delete()) {
-            log.info("Deleted the shared secret of the old protocol");
-        }
-        return true;
     }
 
     private static PublicKey publicKey(byte[] registration) throws GeneralSecurityException {
@@ -206,14 +213,15 @@ public class DatabaseState {
         }
     }
 
-    enum PreCheck {
+    enum Verdict {
         OK,
         /**
          * Missing or malformed header, or a replayed nonce.
          */
         FORBIDDEN,
         /**
-         * The timestamp is too far from the server clock.
+         * The timestamp is too far from the server clock: more than {@link AuthProtocol#MAX_CLOCK_SKEW_MILLIS} when
+         * the request arrives, or {@link #MAX_REQUEST_AGE_MILLIS} when its body has been read.
          */
         STALE,
         /**
@@ -225,33 +233,37 @@ public class DatabaseState {
     /**
      * Checks that don't need the body, so that a request can be rejected before reading it.
      */
-    synchronized PreCheck preCheck(@Nullable AuthHeader header) throws IOException {
+    synchronized Verdict preCheck(@Nullable AuthHeader header) {
+        return check(header, AuthProtocol.MAX_CLOCK_SKEW_MILLIS);
+    }
+
+    private Verdict check(@Nullable AuthHeader header, long maxSkew) {
         if (clock.getAsLong() < blockedUntil) {
-            return PreCheck.BACKOFF;
+            return Verdict.BACKOFF;
         }
         if (header == null || !isRegistered()) {
-            return PreCheck.FORBIDDEN;
+            return Verdict.FORBIDDEN;
         }
-        if (Math.abs(clock.getAsLong() - header.timestamp()) > AuthProtocol.MAX_CLOCK_SKEW_MILLIS) {
-            return PreCheck.STALE;
+        if (Math.abs(clock.getAsLong() - header.timestamp()) > maxSkew) {
+            return Verdict.STALE;
         }
         if (nonces.contains(header.nonceHex())) {
-            return PreCheck.FORBIDDEN;
+            return Verdict.FORBIDDEN;
         }
-        return PreCheck.OK;
+        return Verdict.OK;
     }
 
     /**
-     * Verify the signature of a request that passed {@link #preCheck}, and remember its nonce.
-     *
-     * @return Whether the request is authentic and not a replay.
+     * Verify the signature of a request that passed {@link #preCheck}, and remember its nonce. The checks of
+     * {@link #preCheck} are repeated, e.g. for the same request twice concurrently, but reading the body may have
+     * taken a while, so the timestamp may be up to {@link #MAX_REQUEST_AGE_MILLIS} old by now.
      */
-    synchronized boolean verify(AuthHeader header, String method, String path, byte[] body) throws IOException {
-        if (preCheck(header) != PreCheck.OK) {
-            // e.g. the same request twice concurrently
-            return false;
+    synchronized Verdict verify(AuthHeader header, String method, String path, byte[] body) {
+        Verdict verdict = check(header, MAX_REQUEST_AGE_MILLIS);
+        if (verdict != Verdict.OK) {
+            return verdict;
         }
-        byte[] registration = loadRegistration();
+        byte[] registration = this.registration;
         boolean valid;
         try {
             Signature signature = Signature.getInstance("Ed25519");
@@ -263,7 +275,7 @@ public class DatabaseState {
             valid = false;
         }
         if (valid) {
-            nonces.add(header.nonceHex());
+            nonces.add(header.nonceHex(), header.timestamp(), clock.getAsLong());
             consecutiveFailures = 0;
         } else {
             consecutiveFailures++;
@@ -275,15 +287,15 @@ public class DatabaseState {
                          consecutiveFailures, backoff / 1000);
             }
         }
-        return valid;
+        return valid ? Verdict.OK : Verdict.FORBIDDEN;
     }
 
     /**
      * Check that an uploaded database has a header of the current format and our install salt, so that a buggy
      * client can't replace the database with something no client can read.
      */
-    boolean isValidDatabase(byte[] db) throws IOException {
-        byte[] registration = loadRegistration();
+    boolean isValidDatabase(byte[] db) {
+        byte[] registration = this.registration;
         if (registration == null || db.length < AuthProtocol.BLOB_HEADER_LENGTH) {
             return false;
         }
@@ -295,9 +307,14 @@ public class DatabaseState {
                              registration, 1, 1 + AuthProtocol.SALT_LENGTH);
     }
 
+    /**
+     * @return The database, or {@code null} if there is none of this registration. The data directory may still hold
+     * the database of the old protocol, which must not be served to whoever registers a migrated server first.
+     */
     @Nullable
     byte[] loadDatabase() throws IOException {
-        return databaseStorageProvider.load();
+        byte[] db = databaseStorageProvider.load();
+        return db != null && isValidDatabase(db) ? db : null;
     }
 
     void saveDatabase(byte[] db) throws IOException {

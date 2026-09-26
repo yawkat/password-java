@@ -105,12 +105,14 @@ There is no challenge. The server checks, in this order:
 2. The header is well-formed and the server is registered, else 403.
 3. `|server time − timestamp| ≤ 60 s`, else 401 with a `Date` header. The client then retries once with its clock
    corrected by the difference to `Date`.
-4. The nonce was not used by an accepted request, else 403. Accepted nonces are remembered for two minutes (at
-   most 10,000; the oldest are forgotten first).
-5. The signature, else 403, which counts towards the backoff.
+4. The nonce was not used by an accepted request, else 403.
+5. After the body has been read, steps 1-4 again, except that the timestamp may now be up to 120 s away (the
+   upload may have been slow). Then the signature, else 403, which counts towards the backoff.
 
-Steps 1-4 happen before the body is read. On success the nonce is remembered, so every request is accepted at most
-once. A server restart forgets the nonces; a request replayed within a minute of that is accepted once more, which
+Steps 1-4 happen before the body is read. On success the nonce is remembered until the server clock is more than
+120 s past its timestamp, so every request is accepted at most once. This also holds if the server clock steps back;
+only a forward jump followed by a step back can make a request from before the jump acceptable once more. At most
+10,000 nonces are remembered; beyond that, the one with the oldest timestamp is forgotten early. A server restart forgets the nonces; a request replayed within a minute of that is accepted once more, which
 only returns or stores what the original request did.
 
 ### `GET /db`
@@ -120,8 +122,12 @@ only returns or stores what the original request did.
 | 200    | The stored encrypted blob                              |
 | 401    | Timestamp out of range                                 |
 | 403    | Invalid or replayed request                            |
-| 404    | No database has been stored yet                        |
+| 404    | No database of this registration has been stored yet   |
 | 429    | Backoff                                                |
+
+Only a stored blob with the header of this registration (magic, version, install salt) is returned. In particular,
+the database of the old protocol, which a migrated server still has in its data directory, is never served: it
+would give whoever registers the server first an offline password oracle.
 
 ### `PUT /db`
 
@@ -209,15 +215,19 @@ files plus `latest`). Keys are derived once per install salt and kept in memory 
      the password and gets a new install salt), marked "not on server"; otherwise there is no database yet, and the
      apps ask the user to repeat the master password (`ConfirmCreate`) before creating an empty one. **Loading never
      registers**: that only happens on the first save, so entering a URL does not claim a server.
-   - Otherwise derive the keys for the install salt and `GET /db`. A 404 there is treated like "not registered".
+   - Otherwise derive the keys for the install salt and `GET /db`. A 404 there means that no database was saved
+     yet: use the local copy if there is one, marked "not on server", or else there is no database yet, as above.
+     The next save uploads without registering.
 2. If a request fails (network error, 403, 429, ...), use the local copy, marked "server unavailable"; without a
    local copy the error is raised. A wrong password gets 403 from the server and then fails to decrypt the local copy,
-   so it is reported as a wrong password.
+   so it is reported as a wrong password. Saves keep using the server's install salt if it is known, else that of the
+   local copy. A legacy local copy has none, so it can't be saved until the server is reachable.
 3. Otherwise decrypt the remote blob.
    - If that fails, fall back to the local copy ("server copy invalid"). If there is no local copy, or it also fails,
      the remote error is raised.
    - If the local copy has the same install salt and a **higher revision**, use the local copy ("server copy older"):
-     the server copy was rolled back, or our last upload failed. The local copy is not replaced.
+     the server copy was rolled back, or our last upload failed (the local copy is written first). The client can't
+     tell the two apart. The local copy is not replaced.
    - Otherwise save the remote blob as the new local copy and use it. The remote blob is only saved locally once it
      has been verified, so a corrupt or foreign blob on the server never replaces the local copy.
 

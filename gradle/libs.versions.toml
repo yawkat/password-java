@@ -29,7 +29,6 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 testng = { module = "org.testng:testng", version = "7.12.0" }
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.86" }
 jopt-simple = { module = "net.sf.jopt-simple:jopt-simple", version = "5.0.4" }
-expiringmap = { module = "net.jodah:expiringmap", version = "0.5.11" }
 # versions managed by the Micronaut platform BOM
 logback-classic = { module = "ch.qos.logback:logback-classic" }
 micronaut-http-server = { module = "io.micronaut:micronaut-http-server" }

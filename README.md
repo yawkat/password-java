@@ -102,7 +102,7 @@ The old timestamped files stay in place, encrypted under the old password.
 Servers and clients of the old protocol (shared secret, `/challenge`) don't work with the new ones. To migrate:
 
 1. With the old client, unlock once so that its local copy is current.
-2. Deploy the new server. It keeps the old database files, but ignores them and the `shared-secret`.
+2. Deploy the new server. It keeps the old database files, but never serves them, and ignores the `shared-secret`.
 3. Unlock with the new desktop app (same `storageDir`) and the same master password. The server has no registration
    yet, so the app opens the local copy of the old format ("Server has no database, loaded local copy"). Make any
    change (e.g. add and delete an entry) and confirm the upload: this registers the server with a new install salt,

@@ -8,7 +8,6 @@ import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.FilterMatcher;
 import io.micronaut.http.annotation.ServerFilter;
-import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -39,14 +38,36 @@ class SignatureFilter extends RouteAnnotationFilter {
 
     @Override
     @Nullable
-    protected HttpResponse<?> filterRoute(HttpRequest<?> request) throws IOException {
+    protected HttpResponse<?> filterRoute(HttpRequest<?> request) {
         DatabaseState.AuthHeader header =
                 DatabaseState.parseAuthHeader(request.getHeaders().get(AuthProtocol.AUTH_HEADER));
-        return switch (state.preCheck(header)) {
-            case OK -> {
-                request.setAttribute(HEADER_ATTRIBUTE, header);
-                yield null; // continue
-            }
+        HttpResponse<?> rejection = rejection(state, state.preCheck(header));
+        if (rejection == null) {
+            request.setAttribute(HEADER_ATTRIBUTE, header);
+        }
+        return rejection;
+    }
+
+    /**
+     * Verify the signature of a request that this filter accepted.
+     *
+     * @return The response to reject the request with, or {@code null} if it is authentic. Also rejected if this
+     * filter did not run.
+     */
+    @Nullable
+    static HttpResponse<?> verify(DatabaseState state, HttpRequest<?> request, byte[] body) {
+        DatabaseState.AuthHeader header =
+                request.getAttribute(HEADER_ATTRIBUTE, DatabaseState.AuthHeader.class).orElse(null);
+        if (header == null) {
+            return HttpResponse.status(HttpStatus.FORBIDDEN);
+        }
+        return rejection(state, state.verify(header, request.getMethodName(), request.getPath(), body));
+    }
+
+    @Nullable
+    private static HttpResponse<?> rejection(DatabaseState state, DatabaseState.Verdict verdict) {
+        return switch (verdict) {
+            case OK -> null;
             case FORBIDDEN -> HttpResponse.status(HttpStatus.FORBIDDEN);
             // the Date header lets the client correct its clock. Set it explicitly, from the clock the check used
             case STALE -> HttpResponse.status(HttpStatus.UNAUTHORIZED).header(HttpHeaders.DATE,
@@ -54,17 +75,6 @@ class SignatureFilter extends RouteAnnotationFilter {
                             Instant.ofEpochMilli(state.clock.getAsLong()).atZone(ZoneOffset.UTC)));
             case BACKOFF -> HttpResponse.status(HttpStatus.TOO_MANY_REQUESTS);
         };
-    }
-
-    /**
-     * Verify the signature of a request that this filter accepted.
-     *
-     * @return Whether the request is authentic. {@code false} also if this filter did not run.
-     */
-    static boolean verify(DatabaseState state, HttpRequest<?> request, byte[] body) throws IOException {
-        DatabaseState.AuthHeader header =
-                request.getAttribute(HEADER_ATTRIBUTE, DatabaseState.AuthHeader.class).orElse(null);
-        return header != null && state.verify(header, request.getMethodName(), request.getPath(), body);
     }
 
     /**

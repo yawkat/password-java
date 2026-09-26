@@ -132,6 +132,30 @@ public class ProtocolTest {
     }
 
     @Test
+    public void testOfflineLegacyCopyIsNotSaved() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        byte[] legacy = LegacyBlobTest.fixture();
+        storage.save(legacy);
+
+        // the install salt is unknown: saving would have to invent one that the server doesn't know
+        PasswordClient offline = new PasswordClient("http://127.0.0.1:1", storage, LegacyBlobTest.PASSWORD);
+        ClientValue<PasswordBlob> loaded = offline.load();
+        Assert.assertEquals(loaded.getLocalReason(), ClientValue.LocalReason.SERVER_UNAVAILABLE);
+        IOException e = Assert.expectThrows(IOException.class, () -> offline.save(loaded.getValue()));
+        Assert.assertTrue(e.getMessage().contains("old format"), e.getMessage());
+        Assert.assertSame(storage.load(), legacy);
+    }
+
+    @Test
+    public void testTrailingSlash() throws Exception {
+        PasswordClient client = new PasswordClient(server.getUrl() + "/", new MemoryStorageProvider(), PASSWORD);
+        client.load();
+        client.save(data("a"));
+        Assert.assertEquals(new PasswordClient(server.getUrl() + "//", new MemoryStorageProvider(), PASSWORD)
+                                    .load().getValue(), data("a"));
+    }
+
+    @Test
     public void testClockSkew() throws Exception {
         PasswordClient client = client(new MemoryStorageProvider(), PASSWORD);
         client.load();

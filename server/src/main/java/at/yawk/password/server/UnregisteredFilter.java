@@ -6,7 +6,6 @@ import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.FilterMatcher;
 import io.micronaut.http.annotation.ServerFilter;
-import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -31,7 +30,7 @@ class UnregisteredFilter extends RouteAnnotationFilter {
 
     @Override
     @Nullable
-    protected HttpResponse<?> filterRoute(HttpRequest<?> request) throws IOException {
+    protected HttpResponse<?> filterRoute(HttpRequest<?> request) {
         return state.isRegistered() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
     }
 

@@ -39,7 +39,7 @@ class DatabaseController {
      * Returns the version and install salt, or 404 if the server is not registered yet.
      */
     @Get(uri = "/salt", produces = MediaType.APPLICATION_OCTET_STREAM)
-    HttpResponse<byte[]> salt() throws IOException {
+    HttpResponse<byte[]> salt() {
         byte[] salt = state.getSaltResponse();
         return salt == null ? HttpResponse.notFound() : HttpResponse.ok(salt);
     }
@@ -60,28 +60,32 @@ class DatabaseController {
     }
 
     /**
-     * Returns the database, 403 if the signature is missing or invalid, or 404 if no database has been saved yet.
+     * Returns the database, 401/403/429 if the request is rejected (see {@link SignatureFilter}), or 404 if no
+     * database of this registration has been saved yet.
      */
     @Get(uri = "/db", produces = MediaType.APPLICATION_OCTET_STREAM)
     @SignatureFilter.Required
+    @SuppressWarnings("unchecked")
     HttpResponse<byte[]> getDatabase(HttpRequest<?> request) throws IOException {
-        if (!SignatureFilter.verify(state, request, EMPTY)) {
-            return HttpResponse.status(HttpStatus.FORBIDDEN);
+        HttpResponse<?> rejection = SignatureFilter.verify(state, request, EMPTY);
+        if (rejection != null) {
+            return (HttpResponse<byte[]>) rejection;
         }
         byte[] db = state.loadDatabase();
         return db == null ? HttpResponse.notFound() : HttpResponse.ok(db);
     }
 
     /**
-     * Saves the database. Returns 403 if the signature is missing or invalid, 400 if the body is not a database of
-     * this registration.
+     * Saves the database. Returns 401/403/429 if the request is rejected (see {@link SignatureFilter}), 400 if the body
+     * is not a database of this registration.
      */
     @Put(uri = "/db", consumes = MediaType.ALL)
     @SignatureFilter.Required
     HttpResponse<?> putDatabase(HttpRequest<?> request, @Nullable @Body byte[] db) throws IOException {
         byte[] body = db == null ? EMPTY : db;
-        if (!SignatureFilter.verify(state, request, body)) {
-            return HttpResponse.status(HttpStatus.FORBIDDEN);
+        HttpResponse<?> rejection = SignatureFilter.verify(state, request, body);
+        if (rejection != null) {
+            return rejection;
         }
         if (!state.isValidDatabase(body)) {
             return HttpResponse.badRequest();

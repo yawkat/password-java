@@ -16,13 +16,15 @@ import org.jetbrains.annotations.Nullable;
  * @author yawkat
  */
 @Slf4j
-@RequiredArgsConstructor
 class DatabaseClient {
     /**
      * Same as the server's request limit: a larger response is not a database.
      */
     static final int MAX_RESPONSE_SIZE = 4 * 1024 * 1024;
 
+    /**
+     * Base URL without trailing slash: the signature covers the path, which must be what the server sees.
+     */
     private final String url;
 
     /**
@@ -36,6 +38,13 @@ class DatabaseClient {
      * Difference between the server clock and ours, learned from a response rejected for its timestamp.
      */
     private volatile long clockOffsetMillis = 0;
+
+    DatabaseClient(String url) {
+        while (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        this.url = url;
+    }
 
     /**
      * @return The install salt, or {@code null} if the server has no registration yet.
@@ -107,6 +116,9 @@ class DatabaseClient {
         connection.setConnectTimeout(connectTimeoutMillis);
         connection.setReadTimeout(readTimeoutMillis);
         connection.setRequestMethod(method);
+        // A redirect is an error (below). Following one would also send the signed header to the redirect target,
+        // which could replay it to the real server.
+        connection.setInstanceFollowRedirects(false);
         if (keys != null) {
             long timestamp = System.currentTimeMillis() + clockOffsetMillis;
             String nonce = PlatformDependent.printHexBinary(HashUtil.generateRandomBytes(AuthProtocol.NONCE_LENGTH));
@@ -123,7 +135,8 @@ class DatabaseClient {
             }
         }
         int status = connection.getResponseCode();
-        if (status == 401) {
+        // a 401 for an unsigned request (e.g. from an authenticating proxy) is an error like any other, below
+        if (status == 401 && keys != null) {
             return new Response(status, connection.getHeaderFieldDate("Date", 0), null);
         }
         // error codes are thrown by getInputStream (404 as FileNotFoundException), but other non-2xx responses such
