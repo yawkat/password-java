@@ -32,7 +32,7 @@ public class PasswordClient {
     }
 
     public ClientValue<PasswordBlob> load() throws Exception {
-        return databaseClient.load().map(bytes -> {
+        return databaseClient.load(bytes -> {
             EncryptedBlob encryptedBlob = new EncryptedBlob();
             encryptedBlob.read(bytes);
             return AesCodec.decrypt(objectMapper, password, encryptedBlob).getData();
