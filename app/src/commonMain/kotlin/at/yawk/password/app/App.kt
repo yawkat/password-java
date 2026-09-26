@@ -57,14 +57,14 @@ import androidx.compose.ui.unit.dp
 class WindowHooks {
     internal var closeHandler: ((onConfirmed: () -> Unit) -> Unit)? = null
     internal var keyHandler: ((KeyEvent) -> Boolean)? = null
-    internal var backgroundHandler: (() -> Unit)? = null
+    internal val backgroundHandlers = mutableSetOf<() -> Unit>()
 
     /**
-     * To be called when the app goes to the background (Android). Forgets a master password that was typed but not
+     * To be called when the app goes to the background (Android). Forgets master passwords that were typed but not
      * submitted; locking is up to the caller ([PasswordViewModel.onBackground]).
      */
     fun onBackground() {
-        backgroundHandler?.invoke()
+        backgroundHandlers.toList().forEach { it() }
     }
 
     fun requestClose(onConfirmed: () -> Unit) {
@@ -113,7 +113,7 @@ fun App(
                         UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
                     is UiState.ConfirmCreate -> {
                         UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
-                        CreateDatabaseDialog(s.config, viewModel)
+                        CreateDatabaseDialog(s.config, viewModel, hooks)
                     }
                     is UiState.Unlocked -> {
                         val mainState = remember { MainScreenState() }
@@ -152,8 +152,9 @@ private fun UnlockScreen(
         }
     }
     DisposableEffect(hooks, password) {
-        hooks.backgroundHandler = { password.clearSecret() }
-        onDispose { hooks.backgroundHandler = null }
+        val handler = { password.clearSecret() }
+        hooks.backgroundHandlers += handler
+        onDispose { hooks.backgroundHandlers -= handler }
     }
     val onEnter = Modifier.onPreviewKeyEvent {
         if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter)) {
@@ -184,15 +185,20 @@ private fun UnlockScreen(
                     ),
                     modifier = Modifier.fillMaxWidth().then(onEnter),
                 )
-                OutlinedSecureTextField(
-                    state = password,
-                    label = { Text("Master password") },
-                    enabled = !busy,
-                    // the soft keyboard's action button unlocks
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    onKeyboardAction = { unlock() },
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus).then(onEnter),
-                )
+                SecretInput {
+                    OutlinedSecureTextField(
+                        state = password,
+                        label = { Text("Master password") },
+                        enabled = !busy,
+                        // the soft keyboard's action button unlocks
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        onKeyboardAction = { unlock() },
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus).then(onEnter),
+                    )
+                }
                 Text(
                     "Local copy: ${config.storageDirectory}",
                     style = MaterialTheme.typography.bodySmall,
@@ -217,7 +223,7 @@ private fun UnlockScreen(
 }
 
 @Composable
-private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel) {
+private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel, hooks: WindowHooks) {
     val repeated = remember { TextFieldState() }
     val focus = remember { FocusRequester() }
     fun create() {
@@ -225,6 +231,11 @@ private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel
         repeated.clearSecret()
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    DisposableEffect(hooks, repeated) {
+        val handler = { repeated.clearSecret() }
+        hooks.backgroundHandlers += handler
+        onDispose { hooks.backgroundHandlers -= handler }
+    }
     AlertDialog(
         onDismissRequest = { viewModel.cancelCreate() },
         title = { Text("No database found") },
@@ -234,20 +245,25 @@ private fun CreateDatabaseDialog(config: AppConfig, viewModel: PasswordViewModel
                     "No password database exists on the server or in ${config.storageDirectory}.\n\n" +
                         "Create a new, empty database with this master password?",
                 )
-                OutlinedSecureTextField(
-                    state = repeated,
-                    label = { Text("Repeat the master password") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    onKeyboardAction = { create() },
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter)) {
-                            create()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                )
+                SecretInput {
+                    OutlinedSecureTextField(
+                        state = repeated,
+                        label = { Text("Repeat the master password") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        onKeyboardAction = { create() },
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter)) {
+                                create()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    )
+                }
             }
         },
         confirmButton = { Button(onClick = ::create) { Text("Create") } },

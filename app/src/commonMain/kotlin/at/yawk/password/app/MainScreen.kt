@@ -794,28 +794,32 @@ private fun CompactEditor(ui: MainScreenState, busy: Boolean, nameFocus: FocusRe
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            value = ui.draftName,
-            onValueChange = { ui.draftName = it },
-            label = { Text("Name") },
-            singleLine = true,
-            enabled = !busy,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth().focusRequester(nameFocus),
-        )
-        OutlinedTextField(
-            value = ui.draftValue,
-            onValueChange = { ui.draftValue = it },
-            label = { Text("Value") },
-            placeholder = { Text("First line: password\nFurther lines: username, notes, …") },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-            enabled = !busy,
-            minLines = 6,
-            // A normal (multi-line) keyboard: the password type makes some keyboards drop the newline key. Compose
-            // has no way to set IME_FLAG_NO_PERSONALIZED_LEARNING, so without suggestions is the best we can do.
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // the keyboard must not learn (or suggest) the stored names and secrets
+        SecretInput {
+            OutlinedTextField(
+                value = ui.draftName,
+                onValueChange = { ui.draftName = it },
+                label = { Text("Name") },
+                singleLine = true,
+                enabled = !busy,
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth().focusRequester(nameFocus),
+            )
+        }
+        SecretInput {
+            OutlinedTextField(
+                value = ui.draftValue,
+                onValueChange = { ui.draftValue = it },
+                label = { Text("Value") },
+                placeholder = { Text("First line: password\nFurther lines: username, notes, …") },
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                enabled = !busy,
+                minLines = 6,
+                // a normal multi-line keyboard: with the password type, some keyboards have no newline key
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         OutlinedButton(
             onClick = { ui.draftValue = withGeneratedPassword(ui.draftValue) },
             enabled = !busy,
