@@ -42,6 +42,18 @@ public final class TestServer implements AutoCloseable {
         return new TestServer(dataDirectory, server);
     }
 
+    /**
+     * Run the server clock this far ahead of the real one.
+     */
+    public void setClockOffset(long offsetMillis) {
+        server.getApplicationContext().getBean(DatabaseState.class).clock =
+                () -> System.currentTimeMillis() + offsetMillis;
+    }
+
+    public Path getDataDirectory() {
+        return dataDirectory;
+    }
+
     public String getUrl() {
         return "http://127.0.0.1:" + server.getPort();
     }

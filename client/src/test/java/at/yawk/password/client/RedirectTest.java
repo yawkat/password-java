@@ -11,6 +11,28 @@ import org.testng.annotations.Test;
  * @author yawkat
  */
 public class RedirectTest {
+    /**
+     * E.g. a proxy asking for credentials: an error, with the local copy as fallback, rather than an empty response.
+     */
+    @Test
+    public void testUnauthorizedIsAnError() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            exchange.getResponseHeaders().add("WWW-Authenticate", "Basic realm=\"proxy\"");
+            exchange.sendResponseHeaders(401, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            PasswordClient client = new PasswordClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), new MemoryStorageProvider(), new byte[]{ 1 });
+            IOException e = Assert.expectThrows(IOException.class, client::load);
+            Assert.assertTrue(e.getMessage().contains("401"), e.getMessage());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     public void testRedirectIsNotTreatedAsData() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

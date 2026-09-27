@@ -14,19 +14,19 @@ import io.micronaut.scheduling.annotation.ExecuteOn;
 import java.io.IOException;
 
 /**
- * HTTP API of the database server. Request and response bodies are raw bytes.
+ * HTTP API of the database server, see SPEC.md. Request and response bodies are raw bytes.
  *
- * <p>Authorization happens in {@link ChallengeTokenFilter} and {@link SharedSecretUnsetFilter}, before the body is
- * read.
+ * <p>Authorization starts in {@link SignatureFilter} and {@link UnregisteredFilter}, before the body is read. The
+ * signature covers the body, so it is verified here.
  *
  * @author yawkat
  */
 @Controller
 @ExecuteOn(TaskExecutors.BLOCKING) // storage access is blocking file IO, keep it off the event loop
 class DatabaseController {
-    // An empty request body binds as null and is stored as an empty value, as before. The Micronaut
-    // processor warns about @Nullable byte[] ("primitive types"), but the null case is handled. Optional<byte[]>
-    // would avoid the warning, but makes Micronaut decode the form content type that HttpURLConnection sends.
+    // An empty request body binds as null. The Micronaut processor warns about @Nullable byte[] ("primitive types"),
+    // but the null case is handled. Optional<byte[]> would avoid the warning, but makes Micronaut decode the form
+    // content type that HttpURLConnection sends.
     private static final byte[] EMPTY = new byte[0];
 
     private final DatabaseState state;
@@ -36,47 +36,61 @@ class DatabaseController {
     }
 
     /**
-     * Returns a new challenge, or 404 if no shared secret has been set yet.
+     * Returns the version and install salt, or 404 if the server is not registered yet.
      */
-    @Get(uri = "/challenge", produces = MediaType.APPLICATION_OCTET_STREAM)
-    HttpResponse<byte[]> challenge() throws IOException {
-        byte[] challenge = state.createChallenge();
-        return challenge == null ? HttpResponse.notFound() : HttpResponse.ok(challenge);
+    @Get(uri = "/salt", produces = MediaType.APPLICATION_OCTET_STREAM)
+    HttpResponse<byte[]> salt() {
+        byte[] salt = state.getSaltResponse();
+        return salt == null ? HttpResponse.notFound() : HttpResponse.ok(salt);
     }
 
     /**
-     * Sets the shared secret. Returns 403 if it is already set.
+     * Registers the install salt and public key. Returns 403 if the server is registered already, 400 if the
+     * registration is malformed.
      */
-    @Put(uri = "/shared-secret", consumes = MediaType.ALL)
-    @SharedSecretUnsetFilter.Required
-    HttpResponse<?> putSharedSecret(@Nullable @Body byte[] secret) throws IOException {
-        return state.setSharedSecretIfUnset(secret == null ? EMPTY : secret) ?
-                HttpResponse.ok() : HttpResponse.status(HttpStatus.FORBIDDEN);
+    @Put(uri = "/register", consumes = MediaType.ALL)
+    @UnregisteredFilter.Required
+    HttpResponse<?> register(@Nullable @Body byte[] registration) throws IOException {
+        try {
+            return state.registerIfUnregistered(registration == null ? EMPTY : registration) ?
+                    HttpResponse.ok() : HttpResponse.status(HttpStatus.FORBIDDEN);
+        } catch (IllegalArgumentException e) {
+            return HttpResponse.badRequest();
+        }
     }
 
     /**
-     * Returns the database, 403 if the token is missing or invalid, or 404 if no database has been saved yet.
+     * Returns the database, 401/403/429 if the request is rejected (see {@link SignatureFilter}), or 404 if no
+     * database of this registration has been saved yet.
      */
     @Get(uri = "/db", produces = MediaType.APPLICATION_OCTET_STREAM)
-    @ChallengeTokenFilter.Required
+    @SignatureFilter.Required
+    @SuppressWarnings("unchecked")
     HttpResponse<byte[]> getDatabase(HttpRequest<?> request) throws IOException {
-        if (!ChallengeTokenFilter.isAuthenticated(request)) {
-            return HttpResponse.status(HttpStatus.FORBIDDEN);
+        HttpResponse<?> rejection = SignatureFilter.verify(state, request, EMPTY);
+        if (rejection != null) {
+            return (HttpResponse<byte[]>) rejection;
         }
         byte[] db = state.loadDatabase();
         return db == null ? HttpResponse.notFound() : HttpResponse.ok(db);
     }
 
     /**
-     * Saves the database. Returns 403 if the token is missing or invalid.
+     * Saves the database. Returns 401/403/429 if the request is rejected (see {@link SignatureFilter}), 400 if the body
+     * is not a database of this registration.
      */
     @Put(uri = "/db", consumes = MediaType.ALL)
-    @ChallengeTokenFilter.Required
+    @SignatureFilter.Required
     HttpResponse<?> putDatabase(HttpRequest<?> request, @Nullable @Body byte[] db) throws IOException {
-        if (!ChallengeTokenFilter.isAuthenticated(request)) {
-            return HttpResponse.status(HttpStatus.FORBIDDEN);
+        byte[] body = db == null ? EMPTY : db;
+        HttpResponse<?> rejection = SignatureFilter.verify(state, request, body);
+        if (rejection != null) {
+            return rejection;
         }
-        state.saveDatabase(db == null ? EMPTY : db);
+        if (!state.isValidDatabase(body)) {
+            return HttpResponse.badRequest();
+        }
+        state.saveDatabase(body);
         return HttpResponse.ok();
     }
 }

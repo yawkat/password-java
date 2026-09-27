@@ -1,12 +1,41 @@
 # Boots VMs running the NixOS module and exercises the server protocol the way the client does.
-{ self, testers }:
+{
+  self,
+  testers,
+  writeShellApplication,
+  openssl,
+  xxd,
+}:
 
 let
+  # Prints the X-Auth header for a request: pw-auth METHOD PATH BODY_FILE, signed with /tmp/key.pem. See
+  # AuthProtocol.signingInput.
+  pw-auth = writeShellApplication {
+    name = "pw-auth";
+    runtimeInputs = [
+      openssl
+      xxd
+    ];
+    text = ''
+      ts=$(date +%s%3N)
+      nonce=$(head -c 16 /dev/urandom | xxd -p)
+      body_hash=$(sha256sum < "$3" | cut -d' ' -f1)
+      printf 'at.yawk.password/v1/request\n%s\n%s\n%s\n%s\n%s\n' "$ts" "$nonce" "$1" "$2" "$body_hash" > /tmp/msg
+      sig=$(openssl pkeyutl -sign -inkey /tmp/key.pem -rawin -in /tmp/msg | xxd -p -c 64)
+      echo "$ts $nonce $sig"
+    '';
+  };
+
   common =
     { pkgs, ... }:
     {
       imports = [ self.nixosModules.default ];
-      environment.systemPackages = [ pkgs.curl ];
+      environment.systemPackages = [
+        pkgs.curl
+        openssl
+        xxd
+        pw-auth
+      ];
       services.password-server = {
         enable = true;
         port = 8081;
@@ -37,45 +66,50 @@ testers.runNixOSTest {
         code = status(m, args)
         assert code == "403", f"expected request to be denied with 403, got status {code}"
 
+    def auth(m, method, path, body_file="/dev/null"):
+        return m.succeed(f"pw-auth {method} {path} {body_file}").strip()
+
     def check_server(m, data_dir):
         m.wait_for_unit("password-server.service")
         m.wait_for_open_port(8081)
         # logs go through logback to the journal
         m.wait_until_succeeds("journalctl -u password-server.service | grep -q 'Startup completed'")
 
-        # no shared secret yet
-        assert status(m, f"{url}/challenge") == "404"
+        # not registered yet
+        assert status(m, f"{url}/salt") == "404"
 
-        m.succeed("head -c 32 /dev/urandom > /tmp/secret")
-        m.succeed(f"curl -sf -X PUT --data-binary @/tmp/secret {url}/shared-secret")
+        # registration: version 1, install salt, raw Ed25519 public key
+        m.succeed("openssl genpkey -algorithm ed25519 -out /tmp/key.pem")
+        m.succeed("head -c 32 /dev/urandom > /tmp/salt")
+        m.succeed("{ printf '\\x01'; cat /tmp/salt; openssl pkey -in /tmp/key.pem -pubout -outform DER | tail -c 32; } > /tmp/reg")
+        m.succeed(f"curl -sf -X PUT --data-binary @/tmp/reg {url}/register")
 
-        # the secret can only be set once
-        assert_denied(m, f"-X PUT --data-binary other {url}/shared-secret")
-        m.succeed(f"cmp /tmp/secret {data_dir}/shared-secret")
+        # the registration can only be set once
+        assert_denied(m, f"-X PUT --data-binary @/tmp/reg {url}/register")
+        m.succeed(f"cmp /tmp/reg {data_dir}/verifier")
+        m.succeed(f"curl -sf {url}/salt | cmp - <(head -c 33 /tmp/reg)")
 
-        # authenticated round trip, token = lowercase hex of sha512(secret || challenge), as in DatabaseClient
-        def token():
-            m.succeed(f"curl -sf -o /tmp/challenge {url}/challenge")
-            m.succeed("test \"$(stat -c %s /tmp/challenge)\" = 32")
-            return m.succeed("cat /tmp/secret /tmp/challenge | sha512sum | cut -d' ' -f1").strip()
-
-        m.succeed("head -c 1000 /dev/urandom > /tmp/db")
-        m.succeed(f"curl -sf -X PUT -H 'X-Auth-Token: {token()}' --data-binary @/tmp/db {url}/db")
-        m.succeed(f"curl -sf -H 'X-Auth-Token: {token()}' -o /tmp/db-read {url}/db")
+        # signed round trip of a database with a valid header
+        m.succeed("{ printf 'PWDB\\x01'; cat /tmp/salt; head -c 1000 /dev/urandom; } > /tmp/db")
+        m.succeed(f"curl -sf -X PUT -H 'X-Auth: {auth(m, 'PUT', '/db', '/tmp/db')}' --data-binary @/tmp/db {url}/db")
+        m.succeed(f"curl -sf -H 'X-Auth: {auth(m, 'GET', '/db')}' -o /tmp/db-read {url}/db")
         m.succeed("cmp /tmp/db /tmp/db-read")
         # unauthenticated database access is refused
         assert_denied(m, f"{url}/db")
-        assert_denied(m, f"-X PUT --data-binary other {url}/db")
-        # tokens are single use
-        t = token()
-        m.succeed(f"curl -sf -H 'X-Auth-Token: {t}' -o /dev/null {url}/db")
-        assert_denied(m, f"-H 'X-Auth-Token: {t}' {url}/db")
+        assert_denied(m, f"-X PUT --data-binary @/tmp/db {url}/db")
+        # a signature for GET doesn't authorize a PUT
+        assert_denied(m, f"-X PUT -H 'X-Auth: {auth(m, 'GET', '/db')}' --data-binary @/tmp/db {url}/db")
+        # requests can't be replayed
+        h = auth(m, "GET", "/db")
+        m.succeed(f"curl -sf -H 'X-Auth: {h}' -o /dev/null {url}/db")
+        assert_denied(m, f"-H 'X-Auth: {h}' {url}/db")
 
         # state lives in dataDir: a timestamped copy plus the `latest` link
         m.succeed(f"test -L {data_dir}/latest")
         m.succeed(f"cmp /tmp/db {data_dir}/latest")
         m.succeed(f"find {data_dir} -maxdepth 1 -type f -name '????-??-??T*Z' | grep -q .")
         m.succeed(f"test \"$(stat -c '%U %a' {data_dir})\" = 'password 700'")
+        m.succeed(f"test \"$(stat -c '%a' {data_dir}/verifier)\" = '600'")
 
         # a normal stop is not a failure
         m.succeed("systemctl stop password-server.service")

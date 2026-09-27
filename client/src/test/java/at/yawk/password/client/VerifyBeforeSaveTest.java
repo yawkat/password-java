@@ -1,50 +1,50 @@
 package at.yawk.password.client;
 
+import at.yawk.password.AuthProtocol;
+import at.yawk.password.HashUtil;
 import at.yawk.password.MemoryStorageProvider;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.PasswordBlob;
-import at.yawk.password.model.PasswordEntry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Regression tests for #9: a remote database that fails verification must not replace the local copy.
+ * Regression tests for #9: a remote database that fails verification must not replace the local copy. Also the
+ * rollback check: a remote database older than the local copy must not replace it either.
  *
  * @author yawkat
  */
 public class VerifyBeforeSaveTest {
     private static final byte[] PASSWORD = { 1, 2, 3 };
+    private static final byte[] SALT = HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH);
+    private static final KeyMaterial KEYS = KeyMaterial.derive(PASSWORD, SALT);
+    private static final KeyMaterial OTHER_PASSWORD_KEYS = KeyMaterial.derive("other password".getBytes(), SALT);
 
-    private static PasswordBlob blob(String name) {
-        PasswordEntry entry = new PasswordEntry();
-        entry.setName(name);
-        entry.setValue("value");
-        PasswordBlob blob = new PasswordBlob();
-        blob.getPasswords().add(entry);
-        return blob;
+    private static byte[] encrypt(KeyMaterial keys, long revision, String name) throws Exception {
+        return BlobCodec.encrypt(new ObjectMapper(), keys, BlobCodecTest.blob(revision, name, "value"));
     }
 
-    private static byte[] encrypt(byte[] password, PasswordBlob blob) throws Exception {
-        DecryptedBlob decrypted = new DecryptedBlob();
-        decrypted.setData(blob);
-        return AesCodec.encrypt(new ObjectMapper(), password, decrypted).write();
+    private static PasswordBlob data(String name) {
+        return BlobCodecTest.blob(0, name, "value").getData();
     }
 
     @DataProvider
     public Object[][] badRemotes() throws Exception {
         return new Object[][]{
                 { "garbage".getBytes() },
-                { encrypt("other password".getBytes(), blob("remote")) },
+                { encrypt(OTHER_PASSWORD_KEYS, 5, "remote") },
+                // older than the local copy
+                { encrypt(KEYS, 1, "remote") },
         };
     }
 
     /**
-     * Minimal stand-in for the server that serves {@code remoteDb} on {@code GET /db}.
+     * Minimal stand-in for the server that serves {@code remoteDb} on {@code GET /db}, without checking signatures.
      */
     private static class Server implements AutoCloseable {
         final AtomicInteger dbRequests = new AtomicInteger();
@@ -58,7 +58,9 @@ public class VerifyBeforeSaveTest {
                     dbRequests.incrementAndGet();
                     body = remoteDb;
                 } else {
-                    body = new byte[]{ 4, 5, 6 };
+                    body = new byte[AuthProtocol.SALT_RESPONSE_LENGTH];
+                    body[0] = AuthProtocol.VERSION;
+                    System.arraycopy(SALT, 0, body, 1, SALT.length);
                 }
                 exchange.sendResponseHeaders(200, body.length);
                 exchange.getResponseBody().write(body);
@@ -79,8 +81,7 @@ public class VerifyBeforeSaveTest {
 
     @Test(dataProvider = "badRemotes")
     public void testUnverifiedRemoteFallsBackToLocal(byte[] remoteDb) throws Exception {
-        PasswordBlob localBlob = blob("local");
-        byte[] localDb = encrypt(PASSWORD, localBlob);
+        byte[] localDb = encrypt(KEYS, 2, "local");
         MemoryStorageProvider storage = new MemoryStorageProvider();
         storage.save(localDb);
 
@@ -88,8 +89,18 @@ public class VerifyBeforeSaveTest {
             ClientValue<PasswordBlob> loaded = server.client(storage).load();
             Assert.assertEquals(server.dbRequests.get(), 1);
             Assert.assertTrue(loaded.isFromLocalStorage());
-            Assert.assertEquals(loaded.getValue(), localBlob);
+            Assert.assertEquals(loaded.getValue(), data("local"));
             Assert.assertSame(storage.load(), localDb);
+        }
+    }
+
+    @Test
+    public void testRollbackReason() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        storage.save(encrypt(KEYS, 2, "local"));
+        try (Server server = new Server(encrypt(KEYS, 1, "remote"))) {
+            Assert.assertEquals(server.client(storage).load().getLocalReason(),
+                                ClientValue.LocalReason.SERVER_COPY_OLDER);
         }
     }
 
@@ -97,9 +108,8 @@ public class VerifyBeforeSaveTest {
     public void testUnverifiedRemoteWithoutLocalCopy() throws Exception {
         MemoryStorageProvider storage = new MemoryStorageProvider();
 
-        try (Server server = new Server(encrypt("other password".getBytes(), blob("remote")))) {
-            Exception e = Assert.expectThrows(Exception.class, server.client(storage)::load);
-            Assert.assertTrue(e.getMessage().startsWith("Invalid HMAC"), e.getMessage());
+        try (Server server = new Server(encrypt(OTHER_PASSWORD_KEYS, 1, "remote"))) {
+            Assert.expectThrows(WrongPasswordException.class, server.client(storage)::load);
             Assert.assertEquals(server.dbRequests.get(), 1);
             Assert.assertNull(storage.load());
         }
@@ -108,15 +118,27 @@ public class VerifyBeforeSaveTest {
     @Test
     public void testVerifiedRemoteIsSaved() throws Exception {
         MemoryStorageProvider storage = new MemoryStorageProvider();
-        storage.save(encrypt(PASSWORD, blob("local")));
-        PasswordBlob remoteBlob = blob("remote");
-        byte[] remoteDb = encrypt(PASSWORD, remoteBlob);
+        storage.save(encrypt(KEYS, 2, "local"));
+        // same revision: e.g. another client saved its own change on top of the same state
+        byte[] remoteDb = encrypt(KEYS, 2, "remote");
 
         try (Server server = new Server(remoteDb)) {
             ClientValue<PasswordBlob> loaded = server.client(storage).load();
             Assert.assertFalse(loaded.isFromLocalStorage());
-            Assert.assertEquals(loaded.getValue(), remoteBlob);
+            Assert.assertEquals(loaded.getValue(), data("remote"));
             Assert.assertEquals(storage.load(), remoteDb);
+        }
+    }
+
+    @Test
+    public void testSaveIncrementsRevision() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        try (Server server = new Server(encrypt(KEYS, 41, "remote"))) {
+            PasswordClient client = server.client(storage);
+            client.load();
+            client.save(data("new"));
+            DecryptedBlob saved = BlobCodec.decrypt(new ObjectMapper(), KEYS, storage.load());
+            Assert.assertEquals(saved.getRevision(), 42);
         }
     }
 }

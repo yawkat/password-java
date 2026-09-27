@@ -510,9 +510,10 @@ fun MainScreen(
             onDismiss = { ui.dialog = null },
         )
         is MainDialog.ConfirmOfflineSave -> ConfirmDialog(
-            title = "Offline copy",
-            text = "The database was loaded from the local copy because the server was unreachable. It may be " +
-                "older than the copy on the server.\n\nSaving replaces the server copy with this version. Continue?",
+            title = "Local copy",
+            text = "The database was loaded from the local copy, not from the server: the server was unreachable, " +
+                "or its copy could not be used. The two may differ.\n\nSaving replaces the server copy with this " +
+                "version. Continue?",
             confirm = "Save",
             onConfirm = dialog.onConfirm,
             onDismiss = { ui.dialog = null },
@@ -682,7 +683,7 @@ private fun CompactBar(
 @Composable
 private fun OfflineBanner() {
     Text(
-        "Offline: showing the local copy, which may be outdated. Saving will overwrite the server copy.",
+        "Showing the local copy, not the server copy. Saving will overwrite the server copy.",
         color = Color.Black,
         modifier = Modifier.fillMaxWidth().background(OfflineBannerColor).padding(8.dp),
     )

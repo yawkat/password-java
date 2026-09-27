@@ -1,14 +1,13 @@
-// In the client's package, for its package-private AesCodec
+// In the client's package, for its package-private KeyMaterial, BlobCodec and LegacyBlob
 package at.yawk.password.client
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.yawk.password.MultiFileLocalStorageProvider
 import at.yawk.password.model.DecryptedBlob
-import at.yawk.password.model.EncryptedBlob
 import at.yawk.password.model.PasswordBlob
 import at.yawk.password.model.PasswordEntry
-import at.yawk.password.model.ScryptParameters
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.io.File
 import java.io.IOException
@@ -21,7 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Runs the libraries the app relies on (Jackson, BouncyCastle, java.nio.file) on the device, which catches calls of
+ * Runs the libraries the app relies on (Jackson, BouncyCastle, JCA AES-GCM, java.nio.file) on the device, which catches calls of
  * JDK methods that its Android version lacks: those only fail at runtime there. CI runs this on the oldest supported
  * version (API 29).
  */
@@ -48,29 +47,37 @@ class DeviceCompatibilityTest {
     }
 
     @Test
-    fun scrypt() {
-        // RFC 7914, section 12
-        val key = ScryptParameters(10, 8, 16, 64, "NaCl".toByteArray()).runScrypt("password".toByteArray())
+    fun keyDerivation() {
+        // Argon2id, HKDF and Ed25519, same vector as KeyMaterialTest in :client
+        val start = System.nanoTime()
+        val keys = KeyMaterial.derive("password".toByteArray(), "0".repeat(32).toByteArray())
+        Log.i("DeviceCompatibilityTest", "Key derivation took ${(System.nanoTime() - start) / 1_000_000} ms")
         assertEquals(
-            "fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640",
-            key.joinToString("") { "%02x".format(it) },
+            "7c9d3f177b79c1cb0310b940a0a790df08eb95c70c24451066e374c987f315ae",
+            keys.publicKey.joinToString("") { "%02x".format(it) },
+        )
+        assertEquals(
+            "b041a31fdff0db3ae6ccafe3af276d31e15aad404f46cec09d11e0a0e73144bd" +
+                "8a86cb093c3f56407d3553e21e4c17a13cb45ba116f11bfbeece0bdc2830a304",
+            keys.sign("hello".toByteArray()).joinToString("") { "%02x".format(it) },
         )
     }
 
     @Test
-    fun aesCodecRoundTrip() {
-        val mapper = ObjectMapper()
-        val decrypted = DecryptedBlob().apply { data = blob("example.com" to "hunter2\nuser") }
-        val encrypted = EncryptedBlob().apply { read(AesCodec.encrypt(mapper, password, decrypted).write()) }
-        assertEquals(decrypted, AesCodec.decrypt(ObjectMapper(), password, encrypted))
+    fun blobCodecRoundTrip() {
+        val keys = KeyMaterial.derive(password, ByteArray(32))
+        val decrypted = DecryptedBlob().apply {
+            data = blob("example.com" to "hunter2\nuser")
+            revision = 3
+        }
+        assertEquals(decrypted, BlobCodec.decrypt(ObjectMapper(), keys, BlobCodec.encrypt(ObjectMapper(), keys, decrypted)))
     }
 
     @Test
-    fun readsJackson3Fixture() {
-        // written by the desktop client with Jackson 3, see JacksonCompatibilityTest in :client
+    fun readsLegacyFixture() {
+        // written by the old desktop client with Jackson 3, see LegacyBlobTest in :client
         val bytes = javaClass.getResourceAsStream("jackson3-db.bin")!!.use { it.readBytes() }
-        val encrypted = EncryptedBlob().apply { read(bytes) }
-        val entries = AesCodec.decrypt(ObjectMapper(), password, encrypted).data.passwords
+        val entries = LegacyBlob.decrypt(ObjectMapper(), password, bytes).data.passwords
         assertEquals(listOf("example.com", "Bänk 🔑", "empty"), entries.map { it.name })
         assertEquals("pässwörd€\t\u0001", entries[1].value)
     }
@@ -84,16 +91,23 @@ class DeviceCompatibilityTest {
     }
 
     @Test
-    fun clientSavesAndLoadsLocalCopy() {
-        // nothing listens on port 1: the client saves locally, then fails the upload, and loads the local copy
+    fun clientLoadsAndSavesLocalCopy() {
+        // a local copy, as the client leaves it after an unlock
+        val keys = KeyMaterial.derive(password, ByteArray(32))
+        val decrypted = DecryptedBlob().apply { data = blob("a" to "1") }
+        MultiFileLocalStorageProvider(dir).save(BlobCodec.encrypt(ObjectMapper(), keys, decrypted))
+
+        // nothing listens on port 1: the client loads the local copy, saves locally, then fails the upload
         val client = PasswordClient("http://127.0.0.1:1", MultiFileLocalStorageProvider(dir), password)
+        val loaded = client.load()
+        assertEquals(ClientValue.LocalReason.SERVER_UNAVAILABLE, loaded.localReason)
+        assertEquals(listOf("a"), loaded.value!!.passwords.map { it.name })
         try {
-            client.save(blob("a" to "1"))
+            client.save(blob("b" to "2"))
             fail("upload should fail")
         } catch (expected: IOException) {
         }
-        val loaded = PasswordClient("http://127.0.0.1:1", MultiFileLocalStorageProvider(dir), password).load()
-        assertTrue(loaded.isFromLocalStorage)
-        assertEquals(listOf("a"), loaded.value!!.passwords.map { it.name })
+        val reloaded = PasswordClient("http://127.0.0.1:1", MultiFileLocalStorageProvider(dir), password).load()
+        assertEquals(listOf("b"), reloaded.value!!.passwords.map { it.name })
     }
 }

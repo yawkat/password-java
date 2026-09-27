@@ -40,7 +40,7 @@ in
       type = lib.types.str;
       default = "/var/lib/password";
       description = ''
-        Directory holding the shared secret and the encrypted database. Must be an absolute path
+        Directory holding the registration and the encrypted database. Must be an absolute path
         without whitespace or `%`. If it is below `/var/lib`, it is managed through systemd's
         `StateDirectory`; otherwise it is created by systemd-tmpfiles. It cannot be below `/home`,
         `/root` or `/run/user`, because the service runs with `ProtectHome`.

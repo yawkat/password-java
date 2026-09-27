@@ -1,6 +1,6 @@
 package at.yawk.password.server;
 
-import at.yawk.password.HashUtil;
+import at.yawk.password.AuthProtocol;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -19,7 +19,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.testng.Assert;
@@ -35,12 +34,14 @@ public class DatabaseControllerTest {
     private TestServer server;
     private HttpClient httpClient;
     private BlockingHttpClient client;
+    private ServerAuth auth;
 
     @BeforeMethod
     public void open() throws Exception {
         server = TestServer.start();
         httpClient = HttpClient.create(URI.create(server.getUrl()).toURL());
         client = httpClient.toBlocking();
+        auth = new ServerAuth();
     }
 
     @AfterMethod
@@ -58,25 +59,24 @@ public class DatabaseControllerTest {
         }
     }
 
-    private HttpStatus getDb(String token) {
+    private HttpResponse<byte[]> getDb(String auth) {
         MutableHttpRequest<?> request = HttpRequest.GET("/db");
-        if (token != null) {
-            request.header("X-Auth-Token", token);
+        if (auth != null) {
+            request.header(AuthProtocol.AUTH_HEADER, auth);
         }
-        return send(request).getStatus();
+        return send(request);
     }
 
-    private byte[] getDbBody(String token) {
-        HttpResponse<byte[]> response = send(HttpRequest.GET("/db").header("X-Auth-Token", token));
+    private byte[] getDbBody() throws Exception {
+        HttpResponse<byte[]> response = getDb(auth.header("GET", "/db", new byte[0]));
         Assert.assertEquals(response.getStatus(), HttpStatus.OK);
-        // an empty body comes back as absent
-        return response.getBody().orElse(new byte[0]);
+        return response.getBody().orElseThrow();
     }
 
-    private HttpStatus put(String path, String token, byte[] body) {
+    private HttpStatus put(String path, String auth, byte[] body) {
         MutableHttpRequest<byte[]> request = HttpRequest.PUT(path, body).contentType(MediaType.APPLICATION_OCTET_STREAM_TYPE);
-        if (token != null) {
-            request.header("X-Auth-Token", token);
+        if (auth != null) {
+            request.header(AuthProtocol.AUTH_HEADER, auth);
         }
         HttpResponse<byte[]> response = send(request);
         if (response.getStatus() == HttpStatus.OK) {
@@ -85,62 +85,126 @@ public class DatabaseControllerTest {
         return response.getStatus();
     }
 
-    private String token(byte[] secret) {
-        byte[] challenge = client.retrieve(HttpRequest.GET("/challenge"), byte[].class);
-        Assert.assertEquals(challenge.length, 32);
-        return HexFormat.of().withUpperCase().formatHex(HashUtil.sha512(secret, challenge));
+    private HttpStatus putDb(byte[] db) throws Exception {
+        return put("/db", auth.header("PUT", "/db", db), db);
     }
 
-    private byte[] setSecret() {
-        byte[] secret = HashUtil.generateRandomBytes(64);
-        Assert.assertEquals(put("/shared-secret", null, secret), HttpStatus.OK);
-        return secret;
+    private void register() {
+        Assert.assertEquals(put("/register", null, auth.registration()), HttpStatus.OK);
     }
 
     @Test
-    public void testSharedSecret() {
-        Assert.assertEquals(send(HttpRequest.GET("/challenge")).getStatus(), HttpStatus.NOT_FOUND);
+    public void testRegistration() throws Exception {
+        Assert.assertEquals(send(HttpRequest.GET("/salt")).getStatus(), HttpStatus.NOT_FOUND);
+        // unregistered: nothing to sign against
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.FORBIDDEN);
 
-        byte[] secret = setSecret();
+        // malformed registrations
+        Assert.assertEquals(put("/register", null, new byte[10]), HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(put("/register", null, new byte[0]), HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(put("/register", null, ServerAuth.withByte(auth.registration(), 0, 2)),
+                            HttpStatus.BAD_REQUEST);
 
-        // the secret can only be set once
-        Assert.assertEquals(put("/shared-secret", null, HashUtil.generateRandomBytes(64)), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(put("/db", token(secret), new byte[]{ 1 }), HttpStatus.OK);
+        register();
+        HttpResponse<byte[]> salt = send(HttpRequest.GET("/salt"));
+        Assert.assertEquals(salt.getStatus(), HttpStatus.OK);
+        byte[] expected = new byte[AuthProtocol.SALT_RESPONSE_LENGTH];
+        expected[0] = AuthProtocol.VERSION;
+        System.arraycopy(auth.salt, 0, expected, 1, auth.salt.length);
+        Assert.assertEquals(salt.getBody().orElseThrow(), expected);
+
+        // the registration can only be set once
+        Assert.assertEquals(put("/register", null, new ServerAuth().registration()), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(putDb(auth.database(100)), HttpStatus.OK);
     }
 
     @Test
-    public void testDatabase() {
-        byte[] secret = setSecret();
+    public void testDatabase() throws Exception {
+        register();
 
-        Assert.assertEquals(getDb(token(secret)), HttpStatus.NOT_FOUND);
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
 
-        // arbitrary bytes, close to the 4MB request limit
-        byte[] db = HashUtil.generateRandomBytes(4_000_000);
-        Assert.assertEquals(put("/db", token(secret), db), HttpStatus.OK);
-        Assert.assertEquals(getDbBody(token(secret).toLowerCase()), db);
+        // close to the 4MB request limit
+        byte[] db = auth.database(4_000_000);
+        Assert.assertEquals(putDb(db), HttpStatus.OK);
+        Assert.assertEquals(getDbBody(), db);
+    }
 
-        // an empty body is stored as an empty database
-        Assert.assertEquals(put("/db", token(secret), new byte[0]), HttpStatus.OK);
-        Assert.assertEquals(getDbBody(token(secret)).length, 0);
+    /**
+     * A migrated server still has the database of the old protocol in its data directory. It must not be served to
+     * whoever registers first.
+     */
+    @Test
+    public void testLegacyDatabaseIsNotServed() throws Exception {
+        java.nio.file.Files.write(server.getDataDirectory().resolve("latest"), new byte[1000]);
+        register();
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
     }
 
     @Test
-    public void testInvalidTokens() {
-        byte[] secret = setSecret();
-        Assert.assertEquals(put("/db", token(secret), new byte[]{ 1, 2, 3 }), HttpStatus.OK);
+    public void testInvalidDatabase() throws Exception {
+        register();
+        byte[] db = auth.database(1000);
+        Assert.assertEquals(putDb(new byte[0]), HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(putDb(Arrays.copyOf(db, AuthProtocol.BLOB_HEADER_LENGTH - 1)), HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(putDb(ServerAuth.withByte(db, 0, 'X')), HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(putDb(ServerAuth.withByte(db, AuthProtocol.BLOB_MAGIC.length, 2)), HttpStatus.BAD_REQUEST);
+        // another registration's database
+        Assert.assertEquals(putDb(ServerAuth.withByte(db, AuthProtocol.BLOB_INSTALL_SALT_OFFSET + 5,
+                                                      db[AuthProtocol.BLOB_INSTALL_SALT_OFFSET + 5] ^ 1)),
+                            HttpStatus.BAD_REQUEST);
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
+    }
 
-        Assert.assertEquals(getDb(null), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(getDb("not hex"), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(getDb(token(HashUtil.generateRandomBytes(64))), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(put("/db", null, new byte[]{ 4 }), HttpStatus.FORBIDDEN);
+    @Test
+    public void testInvalidAuth() throws Exception {
+        register();
+        byte[] db = auth.database(100);
+        Assert.assertEquals(putDb(db), HttpStatus.OK);
 
-        // tokens are single use
-        String token = token(secret);
-        Assert.assertEquals(getDb(token), HttpStatus.OK);
-        Assert.assertEquals(getDb(token), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(put("/db", token, new byte[]{ 4 }), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(getDb(null).getStatus(), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(getDb("not a header").getStatus(), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(put("/db", null, auth.database(100)), HttpStatus.FORBIDDEN);
+        // wrong key
+        Assert.assertEquals(getDb(new ServerAuth().header("GET", "/db", new byte[0])).getStatus(),
+                            HttpStatus.FORBIDDEN);
+        // signed for another method, path or body
+        Assert.assertEquals(put("/db", auth.header("GET", "/db", new byte[0]), auth.database(100)),
+                            HttpStatus.FORBIDDEN);
+        Assert.assertEquals(getDb(auth.header("GET", "/db/", new byte[0])).getStatus(), HttpStatus.FORBIDDEN);
+        byte[] other = auth.database(100);
+        Assert.assertEquals(put("/db", auth.header("PUT", "/db", other), auth.database(100)), HttpStatus.FORBIDDEN);
 
-        Assert.assertEquals(getDbBody(token(secret)), new byte[]{ 1, 2, 3 });
+        // requests can't be replayed
+        String header = auth.header("GET", "/db", new byte[0]);
+        Assert.assertEquals(getDb(header).getStatus(), HttpStatus.OK);
+        Assert.assertEquals(getDb(header).getStatus(), HttpStatus.FORBIDDEN);
+        header = auth.header("PUT", "/db", other);
+        Assert.assertEquals(put("/db", header, other), HttpStatus.OK);
+        Assert.assertEquals(put("/db", header, other), HttpStatus.FORBIDDEN);
+
+        // stale or future timestamps
+        for (long offset : new long[]{ -AuthProtocol.MAX_CLOCK_SKEW_MILLIS - 5000, AuthProtocol.MAX_CLOCK_SKEW_MILLIS + 5000 }) {
+            HttpResponse<byte[]> response =
+                    getDb(auth.header(System.currentTimeMillis() + offset, "GET", "/db", new byte[0]));
+            Assert.assertEquals(response.getStatus(), HttpStatus.UNAUTHORIZED);
+            Assert.assertTrue(response.getHeaders().contains("Date"));
+        }
+
+        Assert.assertEquals(getDbBody(), other);
+    }
+
+    @Test
+    public void testBackoff() throws Exception {
+        register();
+        ServerAuth attacker = new ServerAuth();
+        for (int i = 0; i < DatabaseState.FREE_FAILURES; i++) {
+            Assert.assertEquals(getDb(attacker.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.FORBIDDEN);
+        }
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.TOO_MANY_REQUESTS);
+        // the backoff is 1s at first
+        server.setClockOffset(1500);
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
     }
 
     /**
@@ -149,20 +213,20 @@ public class DatabaseControllerTest {
      */
     @Test
     public void testFormContentType() throws Exception {
-        byte[] secret = setSecret();
-        byte[] db = HashUtil.generateRandomBytes(100_000);
+        register();
+        byte[] db = auth.database(100_000);
         // the JDK client, because the Micronaut client would form-encode the body
         try (java.net.http.HttpClient jdkClient = java.net.http.HttpClient.newHttpClient()) {
             int status = jdkClient.send(
                     java.net.http.HttpRequest.newBuilder(URI.create(server.getUrl() + "/db"))
                             .PUT(java.net.http.HttpRequest.BodyPublishers.ofByteArray(db))
                             .header("Content-Type", "application/x-www-form-urlencoded")
-                            .header("X-Auth-Token", token(secret))
+                            .header(AuthProtocol.AUTH_HEADER, auth.header("PUT", "/db", db))
                             .build(),
                     java.net.http.HttpResponse.BodyHandlers.discarding()).statusCode();
             Assert.assertEquals(status, 200);
         }
-        Assert.assertEquals(getDbBody(token(secret)), db);
+        Assert.assertEquals(getDbBody(), db);
     }
 
     /**
@@ -170,12 +234,14 @@ public class DatabaseControllerTest {
      */
     @Test
     public void testUnrouted() throws Exception {
-        setSecret();
+        register();
         Assert.assertEquals(send(HttpRequest.GET("/nonexistent")).getStatus(), HttpStatus.NOT_FOUND);
         Assert.assertEquals(send(HttpRequest.POST("/db", new byte[]{ 1 })).getStatus(), HttpStatus.METHOD_NOT_ALLOWED);
         Assert.assertEquals(send(HttpRequest.DELETE("/db")).getStatus(), HttpStatus.METHOD_NOT_ALLOWED);
-        Assert.assertEquals(send(HttpRequest.POST("/shared-secret", new byte[]{ 1 })).getStatus(),
+        Assert.assertEquals(send(HttpRequest.POST("/register", new byte[]{ 1 })).getStatus(),
                             HttpStatus.METHOD_NOT_ALLOWED);
+        // the old protocol
+        Assert.assertEquals(send(HttpRequest.GET("/challenge")).getStatus(), HttpStatus.NOT_FOUND);
         // raw paths, which the Micronaut client would normalize or misread
         Assert.assertEquals(rawStatus("/DB"), 404);
         Assert.assertEquals(rawStatus("/%64b"), 404);
@@ -193,30 +259,32 @@ public class DatabaseControllerTest {
      * Routes that Micronaut also serves under other methods or paths are filtered too.
      */
     @Test
-    public void testRouteVariantsAreFiltered() {
-        byte[] secret = setSecret();
-        Assert.assertEquals(put("/db", token(secret), new byte[]{ 1 }), HttpStatus.OK);
+    public void testRouteVariantsAreFiltered() throws Exception {
+        register();
+        byte[] db = auth.database(100);
+        Assert.assertEquals(putDb(db), HttpStatus.OK);
 
         // HEAD is routed to GET /db
         Assert.assertEquals(send(HttpRequest.HEAD("/db")).getStatus(), HttpStatus.FORBIDDEN);
-        String token = token(secret);
-        Assert.assertEquals(send(HttpRequest.HEAD("/db").header("X-Auth-Token", token)).getStatus(), HttpStatus.OK);
-        Assert.assertEquals(getDb(token), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(send(HttpRequest.HEAD("/db").header(AuthProtocol.AUTH_HEADER, auth.header("GET", "/db", new byte[0])))
+                                    .getStatus(), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(send(HttpRequest.HEAD("/db").header(AuthProtocol.AUTH_HEADER, auth.header("HEAD", "/db", new byte[0])))
+                                    .getStatus(), HttpStatus.OK);
 
         // trailing slashes are routed too
         Assert.assertEquals(send(HttpRequest.GET("/db/")).getStatus(), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(put("/db/", null, new byte[]{ 2 }), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(put("/shared-secret/", null, new byte[]{ 2 }), HttpStatus.FORBIDDEN);
-        Assert.assertEquals(send(HttpRequest.GET("/db/").header("X-Auth-Token", token(secret))).getStatus(),
-                            HttpStatus.OK);
+        Assert.assertEquals(put("/db/", null, auth.database(100)), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(put("/register/", null, new ServerAuth().registration()), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(send(HttpRequest.GET("/db/").header(AuthProtocol.AUTH_HEADER, auth.header("GET", "/db/", new byte[0])))
+                                    .getStatus(), HttpStatus.OK);
 
-        Assert.assertEquals(getDbBody(token(secret)), new byte[]{ 1 });
+        Assert.assertEquals(getDbBody(), db);
     }
 
     @Test
-    public void testTooLarge() {
-        byte[] secret = setSecret();
-        Assert.assertEquals(put("/db", token(secret), new byte[5_000_000]), HttpStatus.REQUEST_ENTITY_TOO_LARGE);
+    public void testTooLarge() throws Exception {
+        register();
+        Assert.assertEquals(putDb(auth.database(5_000_000)), HttpStatus.REQUEST_ENTITY_TOO_LARGE);
     }
 
     /**
@@ -264,11 +332,11 @@ public class DatabaseControllerTest {
      */
     @Test
     public void testUnauthorizedUploads() throws Exception {
-        byte[] secret = setSecret();
+        register();
 
         // Announce a 4MB body but send only the first 64KB: the 403 still arrives, so the server answered without
         // waiting for (let alone buffering) the body.
-        for (String path : new String[]{ "/db", "/db/", "/shared-secret", "/shared-secret/" }) {
+        for (String path : new String[]{ "/db", "/db/", "/register", "/register/" }) {
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress("127.0.0.1", URI.create(server.getUrl()).getPort()));
                 socket.setSoTimeout(10_000);
@@ -288,7 +356,7 @@ public class DatabaseControllerTest {
             for (boolean expectContinue : new boolean[]{ true, false }) {
                 List<CompletableFuture<java.net.http.HttpResponse<Void>>> responses = new ArrayList<>();
                 for (int i = 0; i < 8; i++) {
-                    for (String path : new String[]{ "/db", "/shared-secret" }) {
+                    for (String path : new String[]{ "/db", "/register" }) {
                         responses.add(jdkClient.sendAsync(
                                 upload(server.getUrl() + path, new ZeroBody(4_000_000), expectContinue),
                                 java.net.http.HttpResponse.BodyHandlers.discarding()));
@@ -301,7 +369,8 @@ public class DatabaseControllerTest {
         }
 
         // the server still works normally
-        Assert.assertEquals(put("/db", token(secret), new byte[]{ 1 }), HttpStatus.OK);
-        Assert.assertEquals(getDbBody(token(secret)), new byte[]{ 1 });
+        byte[] db = auth.database(100);
+        Assert.assertEquals(putDb(db), HttpStatus.OK);
+        Assert.assertEquals(getDbBody(), db);
     }
 }

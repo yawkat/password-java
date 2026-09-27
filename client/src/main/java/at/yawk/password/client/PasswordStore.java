@@ -13,7 +13,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The blob is copy-on-write: every modification builds a new blob, saves it, and only replaces the current state
  * once the save succeeded. Entries are treated as immutable and identified by object identity. Mutating methods
- * block (scrypt, network) and must not be called from the UI thread; {@link #getEntries()} may be called from any
+ * block (key derivation, network) and must not be called from the UI thread; {@link #getEntries()} may be called from any
  * thread.
  *
  * @author yawkat
@@ -21,12 +21,12 @@ import org.jetbrains.annotations.Nullable;
 public final class PasswordStore {
     private final PasswordClient client;
     private volatile PasswordBlob blob;
-    private volatile boolean fromLocalStorage;
+    @Nullable private volatile ClientValue.LocalReason localReason;
 
-    private PasswordStore(PasswordClient client, PasswordBlob blob, boolean fromLocalStorage) {
+    private PasswordStore(PasswordClient client, PasswordBlob blob, @Nullable ClientValue.LocalReason localReason) {
         this.client = client;
         this.blob = blob;
-        this.fromLocalStorage = fromLocalStorage;
+        this.localReason = localReason;
     }
 
     /**
@@ -40,14 +40,14 @@ public final class PasswordStore {
         if (value.getValue() == null) {
             return null;
         }
-        return new PasswordStore(client, value.getValue(), value.isFromLocalStorage());
+        return new PasswordStore(client, value.getValue(), value.getLocalReason());
     }
 
     /**
      * Create an empty store. Nothing is saved until the first modification.
      */
     public static PasswordStore createEmpty(PasswordClient client) {
-        return new PasswordStore(client, new PasswordBlob(), false);
+        return new PasswordStore(client, new PasswordBlob(), null);
     }
 
     public List<PasswordEntry> getEntries() {
@@ -55,16 +55,24 @@ public final class PasswordStore {
     }
 
     /**
-     * @return Whether the current data was loaded from the local copy because the server was unreachable.
+     * @return Whether the current data is the local copy rather than the server copy, see {@link #getLocalReason()}.
      */
     public boolean isFromLocalStorage() {
-        return fromLocalStorage;
+        return localReason != null;
+    }
+
+    /**
+     * @return Why the current data is the local copy, or {@code null} if it is the server copy.
+     */
+    @Nullable
+    public ClientValue.LocalReason getLocalReason() {
+        return localReason;
     }
 
     public synchronized void reload() throws Exception {
         ClientValue<PasswordBlob> value = client.load();
         blob = value.getValue() == null ? new PasswordBlob() : value.getValue();
-        fromLocalStorage = value.isFromLocalStorage();
+        localReason = value.getLocalReason();
     }
 
     public PasswordEntry add(String name, String value) throws Exception {
@@ -98,7 +106,7 @@ public final class PasswordStore {
         client.save(copy);
         blob = copy;
         // the remote now has our state, whatever it had before
-        fromLocalStorage = false;
+        localReason = null;
     }
 
     private static int indexOf(List<PasswordEntry> entries, PasswordEntry entry) {

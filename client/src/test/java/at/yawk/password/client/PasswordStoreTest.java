@@ -5,6 +5,7 @@ import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.MemoryStorageProvider;
 import at.yawk.password.model.PasswordEntry;
 import at.yawk.password.server.TestServer;
+import java.io.IOException;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -57,11 +58,22 @@ public class PasswordStoreTest {
     @Test
     public void testFailedSaveKeepsState() throws Exception {
         byte[] password = HashUtil.generateRandomBytes(16);
-        // nothing listens on port 1, so saving to the remote fails
-        PasswordStore store = PasswordStore.createEmpty(
-                new PasswordClient("http://127.0.0.1:1", new MemoryStorageProvider(), password));
-        Assert.assertThrows(() -> store.add("a", "b"));
+        PasswordStore store;
+        try (TestServer stopped = TestServer.start()) {
+            PasswordClient client = new PasswordClient(stopped.getUrl(), new MemoryStorageProvider(), password);
+            Assert.assertNull(PasswordStore.open(client));
+            store = PasswordStore.createEmpty(client);
+        }
+        // the server is gone, so saving to the remote fails
+        Assert.assertThrows(IOException.class, () -> store.add("a", "b"));
         Assert.assertTrue(store.getEntries().isEmpty());
+    }
+
+    @Test
+    public void testSaveBeforeLoad() {
+        PasswordStore store = PasswordStore.createEmpty(
+                new PasswordClient(url, new MemoryStorageProvider(), HashUtil.generateRandomBytes(16)));
+        Assert.assertThrows(IllegalStateException.class, () -> store.add("a", "b"));
     }
 
     @Test

@@ -22,7 +22,6 @@ application {
 dependencies {
     api(project(":shared"))
     implementation(libs.jopt.simple)
-    implementation(libs.expiringmap)
     // JSON for Micronaut's default error responses
     runtimeOnly(libs.micronaut.serde.jackson)
     runtimeOnly(libs.logback.classic)

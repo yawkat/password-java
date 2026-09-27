@@ -1,6 +1,5 @@
 package at.yawk.password.client;
 
-import at.yawk.password.MemoryStorageProvider;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -27,16 +26,15 @@ public class TimeoutTest {
             acceptor.setDaemon(true);
             acceptor.start();
 
-            DatabaseClient client = new DatabaseClient(
-                    new MemoryStorageProvider(), "http://127.0.0.1:" + server.getLocalPort(), new byte[]{ 1, 2, 3 });
+            DatabaseClient client = new DatabaseClient("http://127.0.0.1:" + server.getLocalPort());
             client.readTimeoutMillis = 500;
-            Assert.expectThrows(SocketTimeoutException.class, () -> client.load(bytes -> bytes));
+            Assert.expectThrows(SocketTimeoutException.class, client::getInstallSalt);
         }
     }
 
     @Test
     public void defaults() {
-        DatabaseClient client = new DatabaseClient(new MemoryStorageProvider(), "http://127.0.0.1", new byte[0]);
+        DatabaseClient client = new DatabaseClient("http://127.0.0.1");
         Assert.assertEquals(client.connectTimeoutMillis, 15_000);
         Assert.assertEquals(client.readTimeoutMillis, 60_000);
     }
