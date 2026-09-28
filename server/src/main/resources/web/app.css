@@ -1,0 +1,157 @@
+:root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --border: #d4d4d4;
+    --surface: #fff;
+    --accent: #2d5bd7;
+    --error: #b3261e;
+    --warning-bg: #fff4d6;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #121212;
+        --fg: #e6e6e6;
+        --muted: #a0a0a0;
+        --border: #3a3a3a;
+        --surface: #1e1e1e;
+        --accent: #8ab0ff;
+        --error: #ff8a80;
+        --warning-bg: #3a3120;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+h1 {
+    font-size: 1.5rem;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+.warning {
+    background: var(--warning-bg);
+    padding: 0.75rem;
+    border-radius: 6px;
+}
+
+.error {
+    color: var(--error);
+}
+
+.unlock-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+input, button {
+    font: inherit;
+    color: inherit;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+}
+
+button {
+    cursor: pointer;
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+}
+
+.masked {
+    -webkit-text-security: disc;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.toolbar {
+    display: flex;
+    gap: 0.5rem;
+    position: sticky;
+    top: 0;
+    padding: 0.5rem 0;
+    background: var(--bg);
+}
+
+.toolbar input {
+    flex: 1;
+    min-width: 0;
+}
+
+#entries-status {
+    color: var(--muted);
+    min-height: 1.5em;
+    margin: 0;
+}
+
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+li {
+    border-bottom: 1px solid var(--border);
+}
+
+summary {
+    padding: 0.75rem 0.25rem;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+details[open] {
+    padding-bottom: 0.75rem;
+}
+
+.password-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0 0.25rem;
+}
+
+.password {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+pre {
+    margin: 0.5rem 0.25rem 0;
+    padding: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
+}

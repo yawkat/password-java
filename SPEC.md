@@ -2,7 +2,8 @@
 
 This describes the protocol between client and server and the format of the stored database, as implemented in
 `shared` (`AuthProtocol`), `client` (`PasswordClient`, `DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`,
-`model/*`) and `server` (`DatabaseController`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`).
+`model/*`) and `server` (`DatabaseController`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`,
+`WebHeadersFilter`).
 
 The server stores one opaque blob and never sees the master password or the plaintext. One key derivation from the
 master password gives both the key that signs the client's requests and the keys that encrypt the blob. The server
@@ -24,7 +25,8 @@ All numbers are big-endian. `‖` is concatenation. `hex` is lowercase hexadecim
   value the server or a stored blob chooses. An unknown version is an error.
 
 Out of scope: the server itself can always guess passwords offline (it has the database), and whoever registers a
-fresh server first owns it.
+fresh server first owns it. The emergency web client (below) is code served by the server, so while it is used, the
+server is trusted not to serve a page that leaks the password.
 
 ## Master password
 
@@ -140,6 +142,17 @@ The body is the new encrypted blob. The server checks its header: the magic, ver
 | 400    | Not a blob of this registration                        |
 | 401, 403, 429 | As for `GET /db`                                |
 | 413    | Body larger than 4 MB                                  |
+
+### Emergency web client
+
+Other `GET` paths serve the emergency web client, the static files in `server/src/main/resources/web`: `/` (or
+`/index.html`), `/app.js`, `/app.css` and `/argon2.js` (Argon2id of hash-wasm). Anything else gets 404.
+
+All responses of the server, the API included, carry a `Content-Security-Policy` that only allows same-origin
+scripts, styles and requests plus WebAssembly, and `Cache-Control: no-store` (`WebHeadersFilter`).
+
+The page is a read-only client: it loads as in [Client behaviour](#client-behaviour), without a local copy, and never
+registers or saves. It requests `salt` and `db` relative to its own URL, but signs the path `/db`.
 
 ### Server storage
 

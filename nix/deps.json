@@ -2020,6 +2020,10 @@
    "jar": "sha256-JiAW3TpVnfh67745KATpv2IHh8kgTAq4Ui1MIx6mUJc=",
    "pom": "sha256-RnwtczAljAxt4ZrtKny/Bgo29MT1Jjf6wLNkMJqKpSA="
   },
+  "org/webjars/npm#hash-wasm/4.12.0": {
+   "jar": "sha256-3MUT25+PcHijy4DBebIogeLl2zf6pa4B+dSRtljz6do=",
+   "pom": "sha256-dTy2MMwxKjSNP7I5ecAPdwJnXzUHbeMe7xzU+nSO78E="
+  },
   "software/amazon/awssdk#aws-sdk-java-pom/2.54.3": {
    "pom": "sha256-s4f8qCtFE2RwOY+EpdsNSCUvYzZy12KF3VEF3Lb2uqk="
   },
