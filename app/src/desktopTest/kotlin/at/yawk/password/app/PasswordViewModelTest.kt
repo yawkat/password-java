@@ -261,7 +261,8 @@ class PasswordViewModelTest {
         vm.await<UiState.ConfirmCreate>()
         vm.lockNow()
         vm.await<UiState.Locked>()
-        assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped")
+        // the unlock may still hold the mutex after showing ConfirmCreate, then the wipe runs after it
+        eventually { passwords.last().all { it == 0.toByte() } }
         // not usable anymore
         vm.confirmCreate("secret")
         assertTrue(vm.state.value is UiState.Locked)
