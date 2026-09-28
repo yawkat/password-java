@@ -92,6 +92,26 @@ After 5 failed signatures in a row, the server refuses requests (429) for a seco
 failure up to an hour. This limits online password guessing, at the price that someone who can reach the server can
 keep you out for a while.
 
+### Emergency web access
+
+For when no device with the app is at hand (say, a lost phone while travelling), the server serves a read-only web
+client at `/`: open the server URL in a browser and enter the master password. It lists the entries with a search
+field, can show or copy a password, and locks after five minutes without activity. It can't change anything. A copied
+password is cleared from the clipboard after 30 seconds. Browsers only allow that while the page has focus, so
+otherwise it is cleared when you return to the page, even if you have copied something else since. If you close the
+page before, the password stays in the clipboard. Behind a reverse proxy that serves the server below a path, open that path with a trailing slash
+(`https://example.com/pw/`), since the page loads everything relative to its URL.
+
+The page runs the same protocol as the apps in the browser: Argon2id through WebAssembly
+([hash-wasm](https://github.com/Daninet/hash-wasm), taken from its webjar at build time), and WebCrypto for the rest.
+The key derivation takes a few seconds, longer on a slow phone. It needs HTTPS and a browser with Ed25519 in WebCrypto
+(Firefox 129, Chrome 137, Safari 17 or later).
+
+The master password still never goes to the server, but the server now supplies the code that handles it: whoever
+controls the server or the TLS proxy can serve a page that sends the password elsewhere. With the apps, that takes
+compromising the device. And every device you type the master password into can read the whole database, so use a
+device you trust, in a private window.
+
 To reset a server, stop it and delete `verifier` and `latest` from the data directory. The next client that saves
 registers it again. This is also the only way to change the master password: the client that registers with the new
 password starts with an empty database (or with its local copy, if that is in the new format and it can decrypt it).

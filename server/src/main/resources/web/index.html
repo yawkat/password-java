@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Password emergency access</title>
+    <link rel="stylesheet" href="web/app.css">
+    <script src="web/argon2.js" defer></script>
+    <script src="web/app.js" defer></script>
+</head>
+<body>
+<main>
+    <section id="unlock">
+        <h1>Emergency access</h1>
+        <p class="warning">
+            Read-only access for when no device with the app is at hand. Your master password unlocks everything:
+            only enter it on a device you trust, preferably in a private window, and lock when you are done.
+        </p>
+        <!-- no <form>, so that browsers are less inclined to offer saving the password, see maskPasswordField -->
+        <div class="unlock-form">
+            <label for="password">Master password</label>
+            <input id="password" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"
+                   spellcheck="false">
+            <button id="unlock-button" class="primary" type="button">Unlock</button>
+        </div>
+        <p id="status" role="status"></p>
+        <noscript><p class="error">This page needs JavaScript.</p></noscript>
+    </section>
+    <section id="entries" hidden>
+        <div class="toolbar">
+            <input id="search" type="search" placeholder="Search" autocomplete="off" autocapitalize="off"
+                   spellcheck="false" aria-label="Search">
+            <button id="lock-button" type="button">Lock</button>
+        </div>
+        <p id="entries-status" role="status"></p>
+        <ul id="entry-list"></ul>
+    </section>
+</main>
+</body>
+</html>
