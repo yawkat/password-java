@@ -43,7 +43,8 @@ tasks.processResources {
         include("META-INF/resources/webjars/hash-wasm/*/dist/argon2.umd.min.js")
         include("META-INF/resources/webjars/hash-wasm/*/LICENSE")
         eachFile {
-            path = if (name == "LICENSE") "web/argon2.LICENSE" else "web/argon2.js"
+            // everything in web/ is served, so keep the license out of it
+            path = if (name == "LICENSE") "META-INF/licenses/hash-wasm/LICENSE" else "web/argon2.js"
         }
         includeEmptyDirs = false
     }

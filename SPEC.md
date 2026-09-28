@@ -3,7 +3,7 @@
 This describes the protocol between client and server and the format of the stored database, as implemented in
 `shared` (`AuthProtocol`), `client` (`PasswordClient`, `DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`,
 `model/*`) and `server` (`DatabaseController`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`,
-`WebController`).
+`WebHeadersFilter`).
 
 The server stores one opaque blob and never sees the master password or the plaintext. One key derivation from the
 master password gives both the key that signs the client's requests and the keys that encrypt the blob. The server
@@ -143,12 +143,13 @@ The body is the new encrypted blob. The server checks its header: the magic, ver
 | 401, 403, 429 | As for `GET /db`                                |
 | 413    | Body larger than 4 MB                                  |
 
-### `GET /` and `GET /web/<file>`
+### Emergency web client
 
-The emergency web client (`WebController`, `server/src/main/resources/web`): `index.html`, and below `/web/` the
-files `app.js`, `app.css` and `argon2.js` (Argon2id of hash-wasm). Other names get 404. These files are served with
-a `Content-Security-Policy` that only allows same-origin scripts, styles and requests plus WebAssembly, and
-`Cache-Control: no-store`.
+Other `GET` paths serve the emergency web client, the static files in `server/src/main/resources/web`: `/` (or
+`/index.html`), `/app.js`, `/app.css` and `/argon2.js` (Argon2id of hash-wasm). Anything else gets 404.
+
+All responses of the server, the API included, carry a `Content-Security-Policy` that only allows same-origin
+scripts, styles and requests plus WebAssembly, and `Cache-Control: no-store` (`WebHeadersFilter`).
 
 The page is a read-only client: it loads as in [Client behaviour](#client-behaviour), without a local copy, and never
 registers or saves. It requests `salt` and `db` relative to its own URL, but signs the path `/db`.

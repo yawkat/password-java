@@ -17,7 +17,7 @@ import org.testng.annotations.Test;
  * Serving of the emergency web client. The page itself was tested by hand in a browser against a database written by
  * the Java client; its key derivation matches the values pinned in {@code KeyMaterialTest}.
  */
-public class WebControllerTest {
+public class WebClientTest {
     private TestServer server;
     private HttpClient httpClient;
     private BlockingHttpClient client;
@@ -47,30 +47,33 @@ public class WebControllerTest {
         HttpResponse<byte[]> response = client.exchange(HttpRequest.GET(path), byte[].class);
         Assert.assertEquals(response.getStatus(), HttpStatus.OK);
         Assert.assertEquals(response.getHeaders().get("Content-Type"), contentType);
-        Assert.assertEquals(response.getHeaders().get("Content-Security-Policy"), WebController.CONTENT_SECURITY_POLICY);
+        Assert.assertEquals(response.getHeaders().get("Content-Security-Policy"), WebHeadersFilter.CONTENT_SECURITY_POLICY);
         Assert.assertEquals(response.getHeaders().get("Cache-Control"), "no-store");
         return new String(response.getBody().orElseThrow(), StandardCharsets.UTF_8);
     }
 
     @Test
     public void index() {
-        String html = getServed("/", "text/html;charset=utf-8");
-        Assert.assertTrue(html.contains("src=\"web/app.js\""));
-        Assert.assertTrue(html.contains("src=\"web/argon2.js\""));
+        String html = getServed("/", "text/html");
+        Assert.assertTrue(html.contains("src=\"app.js\""));
+        Assert.assertTrue(html.contains("src=\"argon2.js\""));
     }
 
     @Test
     public void assets() {
-        Assert.assertTrue(getServed("/web/app.js", "text/javascript;charset=utf-8").contains("argon2id"));
-        Assert.assertFalse(getServed("/web/app.css", "text/css;charset=utf-8").isEmpty());
+        Assert.assertTrue(getServed("/app.js", "application/javascript").contains("argon2id"));
+        Assert.assertFalse(getServed("/app.css", "text/css").isEmpty());
         // copied from the webjar by the build
-        Assert.assertTrue(getServed("/web/argon2.js", "text/javascript;charset=utf-8").contains("argon2id"));
+        Assert.assertTrue(getServed("/argon2.js", "application/javascript").contains("argon2id"));
     }
 
     @Test
     public void unknownAsset() {
-        Assert.assertEquals(status("/web/index.html"), HttpStatus.NOT_FOUND);
-        Assert.assertEquals(status("/web/argon2.LICENSE"), HttpStatus.NOT_FOUND);
-        Assert.assertEquals(status("/web/..%2Fverifier"), HttpStatus.NOT_FOUND);
+        Assert.assertEquals(status("/missing.js"), HttpStatus.NOT_FOUND);
+        // only web/ is served
+        Assert.assertEquals(status("/application.properties"), HttpStatus.NOT_FOUND);
+        Assert.assertEquals(status("/..%2Fapplication.properties"), HttpStatus.NOT_FOUND);
+        Assert.assertEquals(status("/%2E%2E/application.properties"), HttpStatus.NOT_FOUND);
+        Assert.assertEquals(status("/META-INF/licenses/hash-wasm/LICENSE"), HttpStatus.NOT_FOUND);
     }
 }
