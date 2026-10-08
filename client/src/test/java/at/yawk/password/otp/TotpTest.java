@@ -1,6 +1,7 @@
 package at.yawk.password.otp;
 
 import at.yawk.password.model.OtpAccount;
+import at.yawk.password.model.OtpAlgorithm;
 import java.nio.charset.StandardCharsets;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;

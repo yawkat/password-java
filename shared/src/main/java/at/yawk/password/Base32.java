@@ -1,12 +1,15 @@
-package at.yawk.password.otp;
+package at.yawk.password;
 
+import java.util.Arrays;
 import lombok.experimental.UtilityClass;
 
 /**
  * Base32 of RFC 4648 (alphabet {@code A-Z2-7}), the encoding of TOTP secrets.
  *
  * <p>Decoding is lenient in the ways that secrets are written down: lowercase, spaces and dashes between groups, and
- * missing or present {@code =} padding are accepted. Unused bits of the last character must be zero.
+ * missing or present {@code =} padding are accepted. So are unused bits of the last character that are not zero, as
+ * other implementations (Python, Google Authenticator) do: they don't affect the decoded bytes, and generators that
+ * pick random Base32 characters produce them. {@link #canonical} gives the one spelling of a value.
  *
  * @author yawkat
  */
@@ -57,20 +60,29 @@ public class Base32 {
                 out[index++] = (byte) (buffer >>> bits);
             }
         }
-        // The leftover bits are zero in an encoding. If they aren't, a character was probably mistyped, and the
-        // codes would be wrong.
-        if ((buffer & (1 << bits) - 1) != 0) {
-            throw new IllegalArgumentException("Invalid Base32: bad last character");
-        }
         return out;
     }
 
     /**
-     * @return The text in upper case, without separators and padding, as {@link #encode} would write it
+     * @return The encoding that {@link #encode} gives for the decoded text: upper case, no separators or padding, and
+     * zero unused bits
+     * @throws IllegalArgumentException if the text is not Base32
+     */
+    public static String canonical(String text) {
+        byte[] bytes = decode(text);
+        try {
+            return encode(bytes);
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    /**
+     * @return The text in upper case, without separators and padding
      * @throws IllegalArgumentException if the text contains other characters than Base32, separators and trailing
      * padding
      */
-    public static String normalize(String text) {
+    static String normalize(String text) {
         StringBuilder out = new StringBuilder(text.length());
         boolean padding = false;
         for (int i = 0; i < text.length(); i++) {

@@ -1,7 +1,9 @@
 package at.yawk.password.otp;
 
 import at.yawk.password.model.OtpAccount;
+import at.yawk.password.model.OtpAlgorithm;
 import org.testng.Assert;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 public class OtpAuthUriTest {
@@ -63,20 +65,69 @@ public class OtpAuthUriTest {
         OtpAccount account = new OtpAccount();
         account.setLabel("work:me");
         account.setSecret("JBSWY3DPEHPK3PXP");
-        Assert.assertEquals(OtpAuthUri.parse(OtpAuthUri.format(account)), account);
+        assertRoundTrip(account);
     }
 
     @Test
-    public void fragmentIgnored() {
-        OtpAccount account = OtpAuthUri.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=30#a");
-        Assert.assertEquals(account.getSecret(), "JBSWY3DPEHPK3PXP");
+    public void hashIsNotAFragment() {
+        // the parameters after the '#' must not be dropped
+        OtpAccount account = OtpAuthUri.parse(
+                "otpauth://totp/Foo:bar?secret=JBSWY3DPEHPK3PXP&issuer=Foo#1&algorithm=SHA256&period=60");
+        Assert.assertEquals(account.getIssuer(), "Foo#1");
+        Assert.assertEquals(account.getAlgorithm(), OtpAlgorithm.SHA256);
+        Assert.assertEquals(account.getPeriod(), 60);
+        assertRejected("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=30#a", "Invalid period");
+        assertRejected("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP#", "Base32");
     }
 
     @Test
-    public void secretNotInErrors() {
-        IllegalArgumentException e = Assert.expectThrows(IllegalArgumentException.class, () -> OtpAuthUri.parse(
-                "otpauth://totp?secret=JBSWY3DPEHPK3PXP&image=https://x/y.png"));
-        Assert.assertFalse(e.getMessage().toUpperCase().contains("JBSWY3DPEHPK3PXP"), e.getMessage());
+    public void whitespace() {
+        OtpAccount account = OtpAuthUri.parse("otpauth://totp/GitHub%20:%20me%20?secret=JBSWY3DPEHPK3PXP&issuer=GitHub+");
+        Assert.assertEquals(account.getIssuer(), "GitHub");
+        Assert.assertEquals(account.getLabel(), "me");
+        account.setLabel(" me");
+        assertRoundTrip(account);
+    }
+
+    @Test
+    public void nonCanonicalSecret() {
+        // random Base32 characters, with unused bits that are not zero (pyotp random_base32 and others)
+        OtpAccount account = OtpAuthUri.parse("otpauth://totp/x?secret=jbswy3dpehpk3pxpjbswy3dpeh");
+        Assert.assertEquals(account.getSecret(), "JBSWY3DPEHPK3PXPJBSWY3DPEE");
+    }
+
+    @Test
+    public void invalidEncodings() {
+        assertRejected("otpauth://totp/B%E4ckerei?secret=JBSWY3DPEHPK3PXP", "UTF-8");
+        Assert.assertEquals(OtpAuthUri.parse("otpauth://totp/a\uD83D%41b?secret=JBSWY3DPEHPK3PXP").getLabel(),
+                            "a\uD83DAb");
+        assertRejected("otpauth://totp/\uD800%f?secret=JBSWY3DPEHPK3PXP", "percent");
+    }
+
+    @DataProvider
+    public Object[][] leakyUris() {
+        return new Object[][]{
+                {"otpauth://totp?secret=JBSWY3DPEHPK3PXP&image=https://x/y.png"},
+                {"otpauth://totp/x?algorithm=SHA1secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://totp/x?period=30secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://totp/x?digits=6secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://totp/x?algorithm=SHA1;secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://totp/x?period=30otpauth://totp/y?secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://JBSWY3DPEHPK3PXP/x?secret=JBSWY3DPEHPK3PXP"},
+                {"otpauth://totp/x?JBSWY3DPEHPK3PXP&JBSWY3DPEHPK3PXP&secret=A"},
+        };
+    }
+
+    @Test(dataProvider = "leakyUris")
+    public void secretNotInErrors(String uri) {
+        IllegalArgumentException e = Assert.expectThrows(IllegalArgumentException.class, () -> OtpAuthUri.parse(uri));
+        Assert.assertFalse(e.getMessage().toUpperCase().contains("JBSWY3DP"), e.getMessage());
+    }
+
+    @Test
+    public void mangledSeparators() {
+        assertRejected("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&amp;digits=8&amp;period=60", "';'");
+        assertRejected("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=Foo;digits=8;period=60", "';'");
     }
 
     @Test
@@ -95,9 +146,8 @@ public class OtpAuthUriTest {
         account.setAlgorithm(OtpAlgorithm.SHA256);
         account.setDigits(7);
         account.setPeriod(10);
-        String uri = OtpAuthUri.format(account);
-        Assert.assertTrue(uri.startsWith("otpauth://totp/B%C3%A4ckerei%3A%20M"), uri);
-        Assert.assertEquals(OtpAuthUri.parse(uri), account);
+        Assert.assertTrue(OtpAuthUri.format(account).startsWith("otpauth://totp/B%C3%A4ckerei%3A%20M"));
+        assertRoundTrip(account);
     }
 
     @Test
@@ -124,6 +174,12 @@ public class OtpAuthUriTest {
         assertRejected("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=0", "period");
         assertRejected("otpauth://totp/x?secret=A&secret=B", "Duplicate");
         assertRejected("otpauth://totp/x%G1?secret=JBSWY3DPEHPK3PXP", "percent");
+    }
+
+    private static void assertRoundTrip(OtpAccount account) {
+        OtpAccount parsed = OtpAuthUri.parse(OtpAuthUri.format(account));
+        parsed.setId(account.getId());
+        Assert.assertEquals(parsed, account);
     }
 
     private static void assertRejected(String uri, String message) {

@@ -1,9 +1,12 @@
 package at.yawk.password.otp;
 
+import at.yawk.password.Base32;
 import at.yawk.password.model.OtpAccount;
+import at.yawk.password.model.OtpAlgorithm;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
+import java.util.Locale;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.experimental.UtilityClass;
@@ -30,8 +33,7 @@ public class Totp {
      * @throws IllegalArgumentException if the account is not a valid TOTP account
      */
     public static String code(OtpAccount account, long unixMillis) {
-        check(account);
-        byte[] secret = Base32.decode(account.getSecret());
+        byte[] secret = checkedSecret(account);
         try {
             return code(secret, account.getAlgorithm(), account.getDigits(), account.getPeriod(),
                         Math.floorDiv(unixMillis, 1000));
@@ -51,15 +53,20 @@ public class Totp {
         return periodMillis - Math.floorMod(unixMillis, periodMillis);
     }
 
+    /**
+     * The parameters must be valid, see {@link #check}.
+     */
     static String code(byte[] secret, OtpAlgorithm algorithm, int digits, long periodSeconds, long unixSeconds) {
-        if (digits < MIN_DIGITS || digits > MAX_DIGITS || periodSeconds <= 0) {
-            throw new IllegalArgumentException("Invalid TOTP parameters");
-        }
+        String macName = switch (algorithm) {
+            case SHA1 -> "HmacSHA1";
+            case SHA256 -> "HmacSHA256";
+            case SHA512 -> "HmacSHA512";
+        };
         long counter = Math.floorDiv(unixSeconds, periodSeconds);
         byte[] hash;
         try {
-            Mac mac = Mac.getInstance(algorithm.macName);
-            mac.init(new SecretKeySpec(secret, algorithm.macName));
+            Mac mac = Mac.getInstance(macName);
+            mac.init(new SecretKeySpec(secret, macName));
             hash = mac.doFinal(ByteBuffer.allocate(8).putLong(counter).array());
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException(e);
@@ -71,19 +78,24 @@ public class Totp {
         for (int i = 0; i < digits; i++) {
             modulus *= 10;
         }
-        StringBuilder code = new StringBuilder(Long.toString(binary % modulus));
-        while (code.length() < digits) {
-            code.insert(0, '0');
-        }
-        return code.toString();
+        // Locale.ROOT: other locales may use other digits
+        return String.format(Locale.ROOT, "%0" + digits + "d", binary % modulus);
     }
 
     /**
      * @throws IllegalArgumentException if the account can't generate codes
      */
     public static void check(OtpAccount account) {
+        Arrays.fill(checkedSecret(account), (byte) 0);
+    }
+
+    /**
+     * @return The decoded secret of a valid account, to be wiped by the caller
+     * @throws IllegalArgumentException if the account can't generate codes
+     */
+    private static byte[] checkedSecret(OtpAccount account) {
         if (!OtpAccount.TYPE_TOTP.equals(account.getType())) {
-            throw new IllegalArgumentException("Unsupported type " + account.getType() + ", only TOTP is supported");
+            throw new IllegalArgumentException("Unsupported type, only TOTP is supported");
         }
         if (account.getAlgorithm() == null) {
             throw new IllegalArgumentException("Missing algorithm");
@@ -99,9 +111,9 @@ public class Totp {
             throw new IllegalArgumentException("Missing secret");
         }
         byte[] secret = Base32.decode(account.getSecret());
-        Arrays.fill(secret, (byte) 0);
         if (secret.length == 0) {
             throw new IllegalArgumentException("Missing secret");
         }
+        return secret;
     }
 }

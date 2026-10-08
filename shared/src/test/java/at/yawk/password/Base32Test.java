@@ -1,4 +1,4 @@
-package at.yawk.password.otp;
+package at.yawk.password;
 
 import java.nio.charset.StandardCharsets;
 import org.testng.Assert;
@@ -36,6 +36,14 @@ public class Base32Test {
     }
 
     @Test
+    public void nonZeroUnusedBits() {
+        // as Python's base64.b32decode: the unused bits of the last character are ignored
+        Assert.assertEquals(Base32.decode("MZ"), Base32.decode("MY"));
+        Assert.assertEquals(Base32.canonical("JBSWY3DPEHPK3PXPJBSWY3DPEH"), "JBSWY3DPEHPK3PXPJBSWY3DPEE");
+        Assert.assertEquals(Base32.canonical("jbsw y3dp-ehpk 3pxp===="), "JBSWY3DPEHPK3PXP");
+    }
+
+    @Test
     public void rejectsInvalid() {
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZXW1"));
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZXW8"));
@@ -45,7 +53,5 @@ public class Base32Test {
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("M"));
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZX"));
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZXW6Y"));
-        // non-zero unused bits in the last character, e.g. a typo of "MY"
-        Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZ"));
     }
 }
