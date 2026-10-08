@@ -45,5 +45,7 @@ public class Base32Test {
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("M"));
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZX"));
         Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZXW6Y"));
+        // non-zero unused bits in the last character, e.g. a typo of "MY"
+        Assert.assertThrows(IllegalArgumentException.class, () -> Base32.decode("MZ"));
     }
 }

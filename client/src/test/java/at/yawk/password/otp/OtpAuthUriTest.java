@@ -52,6 +52,34 @@ public class OtpAuthUriTest {
     }
 
     @Test
+    public void emptyIssuerKeepsLabel() {
+        OtpAccount account = OtpAuthUri.parse("otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&issuer=");
+        Assert.assertEquals(account.getIssuer(), "");
+        Assert.assertEquals(account.getLabel(), "GitHub:me");
+    }
+
+    @Test
+    public void colonInLabelRoundTrip() {
+        OtpAccount account = new OtpAccount();
+        account.setLabel("work:me");
+        account.setSecret("JBSWY3DPEHPK3PXP");
+        Assert.assertEquals(OtpAuthUri.parse(OtpAuthUri.format(account)), account);
+    }
+
+    @Test
+    public void fragmentIgnored() {
+        OtpAccount account = OtpAuthUri.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=30#a");
+        Assert.assertEquals(account.getSecret(), "JBSWY3DPEHPK3PXP");
+    }
+
+    @Test
+    public void secretNotInErrors() {
+        IllegalArgumentException e = Assert.expectThrows(IllegalArgumentException.class, () -> OtpAuthUri.parse(
+                "otpauth://totp?secret=JBSWY3DPEHPK3PXP&image=https://x/y.png"));
+        Assert.assertFalse(e.getMessage().toUpperCase().contains("JBSWY3DPEHPK3PXP"), e.getMessage());
+    }
+
+    @Test
     public void authyToken() {
         OtpAccount account = OtpAuthUri.parse(
                 "otpauth://totp/Cloudflare:me?secret=JBSWY3DPEHPK3PXP&digits=7&period=10");

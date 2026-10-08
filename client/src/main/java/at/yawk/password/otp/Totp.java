@@ -44,6 +44,9 @@ public class Totp {
      * @return Milliseconds until the code of the account changes
      */
     public static long millisUntilNext(OtpAccount account, long unixMillis) {
+        if (account.getPeriod() <= 0) {
+            throw new IllegalArgumentException("Invalid period " + account.getPeriod());
+        }
         long periodMillis = account.getPeriod() * 1000L;
         return periodMillis - Math.floorMod(unixMillis, periodMillis);
     }
@@ -92,7 +95,12 @@ public class Totp {
         if (account.getPeriod() <= 0) {
             throw new IllegalArgumentException("Invalid period " + account.getPeriod());
         }
-        if (account.getSecret() == null || Base32.decode(account.getSecret()).length == 0) {
+        if (account.getSecret() == null) {
+            throw new IllegalArgumentException("Missing secret");
+        }
+        byte[] secret = Base32.decode(account.getSecret());
+        Arrays.fill(secret, (byte) 0);
+        if (secret.length == 0) {
             throw new IllegalArgumentException("Missing secret");
         }
     }

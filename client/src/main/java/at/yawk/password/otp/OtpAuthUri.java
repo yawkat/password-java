@@ -28,15 +28,22 @@ public class OtpAuthUri {
      */
     public static OtpAccount parse(String uri) {
         String text = uri.trim();
+        int fragment = text.indexOf('#');
+        if (fragment >= 0) {
+            text = text.substring(0, fragment);
+        }
         if (text.regionMatches(true, 0, "otpauth-migration://", 0, "otpauth-migration://".length())) {
             throw new IllegalArgumentException("Google Authenticator exports (otpauth-migration://) are not supported");
         }
         if (!text.regionMatches(true, 0, SCHEME, 0, SCHEME.length())) {
             throw new IllegalArgumentException("Not an otpauth:// URI");
         }
-        int typeEnd = text.indexOf('/', SCHEME.length());
-        if (typeEnd < 0) {
-            throw new IllegalArgumentException("Missing type");
+        int typeEnd = SCHEME.length();
+        while (typeEnd < text.length() && text.charAt(typeEnd) != '/' && text.charAt(typeEnd) != '?') {
+            typeEnd++;
+        }
+        if (typeEnd == text.length() || text.charAt(typeEnd) != '/') {
+            throw new IllegalArgumentException("Missing type or label");
         }
         String type = text.substring(SCHEME.length(), typeEnd).toLowerCase(Locale.ROOT);
         if (!type.equals(OtpAccount.TYPE_TOTP)) {
@@ -65,21 +72,21 @@ public class OtpAuthUri {
         }
 
         OtpAccount account = new OtpAccount();
+        // The label is "issuer:account" or "account". An explicitly empty issuer parameter means that there is no
+        // issuer, so a colon in the label is part of the account (this is how format writes such a label).
         String issuer = parameters.get("issuer");
-        if (issuer != null && label.startsWith(issuer + ":")) {
-            // an issuer containing a colon
-            label = label.substring(issuer.length() + 1);
-        } else {
-            int colon = label.indexOf(':');
+        if (issuer == null || !issuer.isEmpty()) {
+            int colon = issuer != null && label.startsWith(issuer + ":") ? issuer.length() : label.indexOf(':');
             if (colon >= 0) {
                 if (issuer == null) {
                     issuer = label.substring(0, colon);
                 }
-                label = label.substring(colon + 1);
+                // the format allows spaces after the colon
+                label = stripLeadingSpaces(label.substring(colon + 1));
             }
         }
-        account.setIssuer(issuer == null ? "" : issuer.trim());
-        account.setLabel(label.trim());
+        account.setIssuer(issuer == null ? "" : issuer);
+        account.setLabel(label);
 
         String secret = parameters.get("secret");
         if (secret == null || secret.isEmpty()) {
@@ -115,7 +122,8 @@ public class OtpAuthUri {
         }
         out.append(encode(account.getLabel()));
         out.append("?secret=").append(Base32.normalize(account.getSecret()));
-        if (!account.getIssuer().isEmpty()) {
+        if (!account.getIssuer().isEmpty() || account.getLabel().indexOf(':') >= 0) {
+            // an empty issuer keeps parse from splitting a colon in the label
             out.append("&issuer=").append(encode(account.getIssuer()));
         }
         if (account.getAlgorithm() != OtpAlgorithm.SHA1) {
@@ -128,6 +136,14 @@ public class OtpAuthUri {
             out.append("&period=").append(account.getPeriod());
         }
         return out.toString();
+    }
+
+    private static String stripLeadingSpaces(String text) {
+        int start = 0;
+        while (start < text.length() && text.charAt(start) == ' ') {
+            start++;
+        }
+        return text.substring(start);
     }
 
     private static int parseInt(String value, String name) {

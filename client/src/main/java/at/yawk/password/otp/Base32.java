@@ -6,7 +6,7 @@ import lombok.experimental.UtilityClass;
  * Base32 of RFC 4648 (alphabet {@code A-Z2-7}), the encoding of TOTP secrets.
  *
  * <p>Decoding is lenient in the ways that secrets are written down: lowercase, spaces and dashes between groups, and
- * missing or present {@code =} padding are accepted.
+ * missing or present {@code =} padding are accepted. Unused bits of the last character must be zero.
  *
  * @author yawkat
  */
@@ -56,6 +56,11 @@ public class Base32 {
                 bits -= 8;
                 out[index++] = (byte) (buffer >>> bits);
             }
+        }
+        // The leftover bits are zero in an encoding. If they aren't, a character was probably mistyped, and the
+        // codes would be wrong.
+        if ((buffer & (1 << bits) - 1) != 0) {
+            throw new IllegalArgumentException("Invalid Base32: bad last character");
         }
         return out;
     }

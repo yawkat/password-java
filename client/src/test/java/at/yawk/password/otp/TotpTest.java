@@ -72,6 +72,7 @@ public class TotpTest {
         account.setDigits(6);
         account.setPeriod(0);
         Assert.assertThrows(IllegalArgumentException.class, () -> Totp.code(account, 0));
+        Assert.assertThrows(IllegalArgumentException.class, () -> Totp.millisUntilNext(account, 0));
         account.setPeriod(30);
         account.setType("hotp");
         Assert.assertThrows(IllegalArgumentException.class, () -> Totp.code(account, 0));
