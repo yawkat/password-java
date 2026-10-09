@@ -1,5 +1,6 @@
 package at.yawk.password.app
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -617,11 +618,18 @@ private fun FingerprintOffer(enabled: Boolean, onEnable: () -> Unit, onDismiss: 
 
 @Composable
 private fun Avatar(account: OtpAccount) {
+    val icon = siteIcon(account)
     Box(
-        Modifier.size(40.dp).clip(CircleShape).background(Color.hsv(avatarHue(account), 0.45f, 0.7f)),
+        Modifier.size(40.dp).clip(CircleShape)
+            .background(icon?.color ?: Color.hsv(avatarHue(account), 0.45f, 0.7f)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(avatarLetter(account), color = Color.White, style = MaterialTheme.typography.titleMedium)
+        if (icon == null) {
+            Text(avatarLetter(account), color = Color.White, style = MaterialTheme.typography.titleMedium)
+        } else {
+            // the title next to the avatar names the service
+            Image(icon.vector, contentDescription = null, modifier = Modifier.size(22.dp))
+        }
     }
 }
 

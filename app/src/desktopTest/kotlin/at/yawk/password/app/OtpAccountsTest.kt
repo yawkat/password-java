@@ -67,6 +67,20 @@ class OtpAccountsTest {
     }
 
     @Test
+    fun siteIcons() {
+        assertEquals("GitHub", siteIcon(account("GitHub"))?.name)
+        assertEquals("Oracle", siteIcon(account("Oracle Cloud"))?.name)
+        assertEquals("Google", siteIcon(account("google.com"))?.name)
+        assertEquals("JetBrains", siteIcon(account("", label = "JetBrains Account"))?.name)
+        assertNull(siteIcon(account("INWX")))
+        assertNull(siteIcon(account("")))
+        // every path parses
+        for (icon in SITE_ICONS) {
+            assertTrue(icon.vector.root.size > 0, icon.name)
+        }
+    }
+
+    @Test
     fun copyNextCodeShortlyBeforeExpiry() {
         val account = account("x")
         assertEquals(codeOrNull(account, 0)!! to false, codeToCopy(account, 0))
