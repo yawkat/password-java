@@ -159,10 +159,10 @@ registers or saves. It requests `salt` and `db` relative to its own URL, but sig
 
 Each `PUT /db` writes a new file in the data directory, named by the current time in ISO-8601 UTC
 (`Instant.toString()`, e.g. `2026-09-26T16:54:45.392616657Z`), then deletes the symlink `latest` and creates it again
-pointing to the new file. `GET /db` returns the content of `latest`. Old files are never deleted. If the symlink
+pointing to the new file by its bare name (a relative target, so the link works however the data directory was
+given and if it is moved). `GET /db` returns the content of `latest`. Old files are never deleted. If the symlink
 cannot be created (e.g. on FAT or some SMB mounts), the request fails and `latest` stays deleted, so `GET /db` returns
-404 until a later upload succeeds. With a relative data directory other than `.`, the link target is wrong and the
-link dangles ([#27](https://github.com/yawkat/password-java/issues/27)). The client's local copy uses the same code.
+404 until a later upload succeeds. The client's local copy uses the same code.
 On POSIX file systems, `verifier` and the database files are created with mode `0600`.
 
 ### 2FA vault
