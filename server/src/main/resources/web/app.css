@@ -188,6 +188,11 @@ details[open] > .otp-summary::before {
     content: "▾";
 }
 
+/* Safari keeps its own marker anyway */
+.otp-summary::-webkit-details-marker {
+    display: none;
+}
+
 .summary-code {
     margin-left: auto;
     white-space: nowrap;
