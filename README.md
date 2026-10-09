@@ -210,6 +210,9 @@ Open the vault with *2FA codes* on the unlock screen. The first time, the app of
 - *Add* scans the QR code with the camera (Android), takes its `otpauth://` link (most sites show the link or the
   secret key next to the code), or the fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
   for the sites that use Authy's own tokens, such as Cloudflare. HOTP (counter-based) and Steam codes are not supported.
+- Accounts of some services (Backblaze, Cloudflare, GitHub, Google, JetBrains, Oracle) show the service's logo, chosen
+  by the issuer. The logos are part of the app, nothing is downloaded, so no one learns which accounts you have. Add
+  more in `SiteIcons.kt`.
 - Each account has a free text field for its backup codes. Keep them here rather than in the password database.
 - The vault locks after five minutes without activity, and on Android as soon as the app goes to the background (after
   a minute if an account is being edited, e.g. while you copy its secret from the browser).
