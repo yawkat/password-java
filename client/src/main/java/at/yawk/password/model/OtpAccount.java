@@ -19,7 +19,8 @@ public class OtpAccount {
     public static final String TYPE_TOTP = "totp";
 
     /**
-     * Random, to tell accounts apart: issuer and label may be empty, and need not be unique.
+     * Random, to tell accounts apart: issuer and label may be empty, and need not be unique. An account without one
+     * (only written by other software) gets a new one, which is kept from the next save on.
      */
     private String id = UUID.randomUUID().toString();
     /**
@@ -51,6 +52,10 @@ public class OtpAccount {
      */
     @ToString.Exclude
     private String backupCodes = "";
+
+    public void setId(@Nullable String id) {
+        this.id = id == null ? UUID.randomUUID().toString() : id;
+    }
 
     public void setIssuer(@Nullable String issuer) {
         this.issuer = issuer == null ? "" : issuer.trim();

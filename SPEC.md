@@ -170,7 +170,7 @@ On POSIX file systems, `verifier` and the database files are created with mode `
 The 2FA vault holds the TOTP secrets and backup codes. It works exactly like the password vault, with the paths
 `/totp/salt`, `/totp/register` and `/totp/db` instead of `/salt`, `/register` and `/db`. It has its own password (the
 "backup password"), install salt, registration, nonces and backoff, and is stored in the subdirectory `totp` of the
-data directory (created with mode `0700` at startup), in the same layout. Registering one vault doesn't register the
+data directory (created with mode `0700` when the 2FA vault is registered), in the same layout. Registering one vault doesn't register the
 other: the first client that saves to `/totp/db` claims the 2FA vault, like the password vault.
 
 The signed path is `/totp/db`, so a request signed for one vault is never accepted by the other, even if both had the

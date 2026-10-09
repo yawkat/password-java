@@ -34,6 +34,9 @@ public class VaultClient<T> {
      */
     private final VaultKey key;
     private final Class<T> dataClass;
+
+    private static final String RESET_MESSAGE =
+            "The vault was reset on the server. Unlock it with its password to create it again.";
     /**
      * The keys that {@link #save} encrypts and signs with, chosen by {@link #load}. {@code null} if nothing was loaded,
      * or if the server was unreachable and the local copy doesn't tell the install salt either (a legacy copy).
@@ -91,6 +94,8 @@ public class VaultClient<T> {
                 byte[] localSalt = local == null ? null : BlobCodec.installSalt(local);
                 if (localSalt != null) {
                     keys = keysFor(localSalt);
+                } else if (!key.mayRegister()) {
+                    throw new WrongPasswordException(RESET_MESSAGE);
                 } else if (keys == null || !keysFromServer) {
                     keys = key.keysForNewVault();
                 }
@@ -210,6 +215,9 @@ public class VaultClient<T> {
             throw new IOException("The server was unreachable, and the local copy is in the old format. Reload once " +
                                   "the server is reachable, then save to migrate it.");
         }
+        if (!registered && !key.mayRegister()) {
+            throw new WrongPasswordException(RESET_MESSAGE);
+        }
         DecryptedBlob<T> decrypted = new DecryptedBlob<>();
         decrypted.setData(blob);
         decrypted.setRevision(revision + 1);
@@ -229,12 +237,14 @@ public class VaultClient<T> {
      * opens this vault like the password does, so keep it as safe as the data.
      *
      * @return {@link VaultKey#EXPORTED_LENGTH} bytes, to be wiped by the caller
-     * @throws IllegalStateException if nothing was loaded yet, or there are no keys (see {@link #save})
+     * @throws IllegalStateException unless the last load or save used the keys of the server's registration: an
+     * export before the first save of a new vault, or while the server is unreachable, could give a key that the server
+     * never accepts
      */
     public byte[] exportKey() {
         KeyMaterial keys = this.keys;
-        if (!loaded || keys == null) {
-            throw new IllegalStateException("No keys to export, load the vault first");
+        if (!loaded || keys == null || !registered || !keysFromServer) {
+            throw new IllegalStateException("No keys of the server's vault to export, load or save it first");
         }
         byte[] rootKey = keys.getRootKey();
         try {

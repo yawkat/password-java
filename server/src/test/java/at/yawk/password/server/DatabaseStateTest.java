@@ -1,8 +1,10 @@
 package at.yawk.password.server;
 
 import at.yawk.password.AuthProtocol;
+import at.yawk.password.PlatformDependent;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
@@ -158,5 +160,24 @@ public class DatabaseStateTest {
             Assert.assertEquals(state.preCheck(bad), DatabaseState.Verdict.OK, "attempt " + i);
             Assert.assertEquals(state.verify(bad, "GET", "/db", new byte[0]), DatabaseState.Verdict.FORBIDDEN);
         }
+    }
+
+    /**
+     * The 2FA vault's directory is created on registration, owner-only, so that the server also starts without it (or
+     * without the data directory).
+     */
+    @Test
+    public void testTotpDirectoryCreatedOnRegistration() throws Exception {
+        new Vaults(dir.resolve("missing").toString());
+
+        Vaults vaults = new Vaults(dir.toString());
+        Path totp = dir.resolve("totp");
+        Assert.assertFalse(Files.exists(totp));
+        Assert.assertTrue(vaults.totp.registerIfUnregistered(new ServerAuth().registration()));
+        Assert.assertTrue(Files.isRegularFile(totp.resolve("verifier")));
+        if (PlatformDependent.isPosix(totp)) {
+            Assert.assertEquals(PosixFilePermissions.toString(Files.getPosixFilePermissions(totp)), "rwx------");
+        }
+        Assert.assertFalse(vaults.passwords.isRegistered());
     }
 }

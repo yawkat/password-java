@@ -62,6 +62,15 @@ public class OtpAccountTest {
     }
 
     @Test
+    public void missingData() throws Exception {
+        OtpBlob blob = new ObjectMapper().readValue("{\"accounts\":null}", OtpBlob.class);
+        Assert.assertEquals(blob.getAccounts().size(), 0);
+        OtpAccount account = new ObjectMapper().readValue("{\"id\":null,\"secret\":\"JBSWY3DPEHPK3PXP\"}",
+                                                          OtpAccount.class);
+        Assert.assertNotNull(account.getId());
+    }
+
+    @Test
     public void distinctIds() {
         Assert.assertNotEquals(new OtpAccount().getId(), new OtpAccount().getId());
     }

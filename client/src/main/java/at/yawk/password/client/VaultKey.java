@@ -73,10 +73,22 @@ public final class VaultKey {
     }
 
     /**
-     * @return Keys for a vault that doesn't exist yet: of a new install salt, or the exported key.
+     * Whether this key may register the vault on the server. An exported key may not: the vault it belongs to was
+     * registered already, so an unregistered server means that the vault was reset (e.g. to change its password), and
+     * registering the old key again would take it back.
+     */
+    boolean mayRegister() {
+        return password != null;
+    }
+
+    /**
+     * @return Keys for a vault that doesn't exist yet, with a new install salt
      */
     KeyMaterial keysForNewVault() throws WrongPasswordException {
-        return password == null ? keys.get(0) : keysFor(HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH));
+        if (!mayRegister()) {
+            throw new IllegalStateException("An exported key can't create a vault");
+        }
+        return keysFor(HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH));
     }
 
     /**

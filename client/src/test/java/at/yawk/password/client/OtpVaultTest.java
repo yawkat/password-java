@@ -146,6 +146,55 @@ public class OtpVaultTest {
     }
 
     /**
+     * A vault that was reset on the server (here: a fresh server) is never registered again with an exported key of
+     * the old one, which would take it back from whoever creates it anew. The local copy can still be read.
+     */
+    @Test
+    public void exportedKeyNeverRegisters() throws Exception {
+        LocalStorageProvider storage = new MemoryStorageProvider();
+        byte[] exported;
+        try (TestServer old = TestServer.start()) {
+            VaultClient<OtpBlob> client = VaultClient.otp(old.getUrl(), storage, VaultKey.ofPassword(BACKUP_PASSWORD));
+            create(client).add(account("A"));
+            exported = client.exportKey();
+        }
+        DatabaseClient server = new DatabaseClient(this.server.getUrl(), AuthProtocol.TOTP_VAULT_PREFIX);
+
+        // without a local copy, there is nothing to open
+        Assert.expectThrows(WrongPasswordException.class, () -> OtpStore.open(VaultClient.otp(
+                this.server.getUrl(), new MemoryStorageProvider(), VaultKey.ofExportedKey(exported))));
+
+        // with one, it opens, but saving doesn't register
+        VaultClient<OtpBlob> client = VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported));
+        OtpStore store = OtpStore.open(client);
+        Assert.assertNotNull(store);
+        Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.NOT_ON_SERVER);
+        Assert.assertEquals(issuers(store), List.of("A"));
+        Assert.expectThrows(WrongPasswordException.class, () -> store.add(account("B")));
+        Assert.assertEquals(issuers(store), List.of("A"));
+        Assert.assertNull(server.getInstallSalt());
+    }
+
+    /**
+     * Only keys that the server accepted are exported: not those of a new vault before its first save, nor those of a
+     * local copy while the server is unreachable.
+     */
+    @Test
+    public void exportOnlyRegisteredKeys() throws Exception {
+        LocalStorageProvider storage = new MemoryStorageProvider();
+        VaultClient<OtpBlob> client = withPassword(storage);
+        OtpStore store = create(client);
+        Assert.expectThrows(IllegalStateException.class, client::exportKey);
+        store.add(account("A"));
+        client.exportKey();
+
+        VaultClient<OtpBlob> offline =
+                VaultClient.otp("http://127.0.0.1:1", storage, VaultKey.ofPassword(BACKUP_PASSWORD));
+        Assert.assertNotNull(OtpStore.open(offline));
+        Assert.expectThrows(IllegalStateException.class, offline::exportKey);
+    }
+
+    /**
      * Only the password vault existed in the old format: a 2FA client never reads a legacy blob.
      */
     @Test

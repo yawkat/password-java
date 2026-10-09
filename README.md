@@ -73,7 +73,7 @@ The data directory contains:
 | `verifier`                       | The registration: install salt and the client's public key, set by the first client that saves (see SPEC.md) |
 | `<timestamp>`, e.g. `2026-09-26T16:54:45.392616657Z` | One encrypted database per upload, named by its ISO-8601 UTC time. Old versions are never deleted. |
 | `latest`                         | Symlink to the newest database file                                        |
-| `totp/`                          | The 2FA vault, with its own password, in the same layout (`verifier`, timestamped files, `latest`). Created at startup. See [SPEC.md](SPEC.md#2fa-vault). |
+| `totp/`                          | The 2FA vault, with its own password, in the same layout (`verifier`, timestamped files, `latest`). Created when the 2FA vault is registered. See [SPEC.md](SPEC.md#2fa-vault). |
 
 Files are created owner-only (`rw-------`). The server logs a warning at startup if the data directory is accessible
 by other users. The data directory must support symlinks: on a file system without them (FAT, some SMB mounts) every
