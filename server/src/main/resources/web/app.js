@@ -23,7 +23,7 @@
             empty: "The server has no password database yet",
         },
         totp: {
-            prefix: "totp/", signedPath: "/totp/db", passwordLabel: "Backup password",
+            prefix: "totp/", signedPath: "/totp/db", passwordLabel: "Backup password (18-028)",
             empty: "The server has no 2FA codes yet",
         },
     };
