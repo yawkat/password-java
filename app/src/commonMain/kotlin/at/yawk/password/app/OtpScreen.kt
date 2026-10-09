@@ -147,7 +147,7 @@ private fun OtpUnlockScreen(
                 SecretInput {
                     OutlinedSecureTextField(
                         state = password,
-                        label = { Text("Backup password") },
+                        label = { Text("Backup password (18-028)") },
                         enabled = !busy,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
@@ -220,7 +220,7 @@ private fun OtpCreateDialog(viewModel: OtpViewModel, hooks: WindowHooks) {
                 SecretInput {
                     OutlinedSecureTextField(
                         state = repeated,
-                        label = { Text("Repeat the backup password") },
+                        label = { Text("Repeat the backup password (18-028)") },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done,
