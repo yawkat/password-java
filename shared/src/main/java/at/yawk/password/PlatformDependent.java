@@ -126,7 +126,7 @@ public class PlatformDependent {
     static void symlinkOrCopy(File source, File target, byte[] sourceData) throws IOException {
         String linkTarget = source.getName();
         try {
-            Files.createSymbolicLink(target.toPath(), Path.of(linkTarget));
+            Files.createSymbolicLink(target.toPath(), new File(linkTarget).toPath());
             return;
         } catch (UnsupportedOperationException ignored) {}
 
