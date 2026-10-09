@@ -37,8 +37,7 @@ public class Vaults {
     @Inject
     Vaults(@Property(name = DATA_DIR_PROPERTY, defaultValue = ".") String dataDirectory) throws IOException {
         passwords = new DatabaseState(dataDirectory);
-        // absolute: the `latest` link of a vault in a relative directory would point to the wrong place (see #27)
-        totp = new DatabaseState(new File(dataDirectory, "totp").getAbsoluteFile(), null);
+        totp = new DatabaseState(new File(dataDirectory, "totp"), null);
         byPrefix = Map.of("", passwords, AuthProtocol.TOTP_VAULT_PREFIX, totp);
     }
 

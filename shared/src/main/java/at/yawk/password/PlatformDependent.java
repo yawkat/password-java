@@ -119,16 +119,19 @@ public class PlatformDependent {
 
     /**
      * Point {@code target} at {@code source} via a symlink, or, if that is not possible, write a copy of
-     * {@code sourceData} (the content of {@code source}) to it.
+     * {@code sourceData} (the content of {@code source}) to it. Both must be in the same directory: the link target is
+     * the file name of {@code source} alone, which resolves against the link's directory however that directory was
+     * given (an absolute or relative path, see #27).
      */
     static void symlinkOrCopy(File source, File target, byte[] sourceData) throws IOException {
+        String linkTarget = source.getName();
         try {
-            Files.createSymbolicLink(target.toPath(), source.toPath());
+            Files.createSymbolicLink(target.toPath(), Path.of(linkTarget));
             return;
         } catch (UnsupportedOperationException ignored) {}
 
         try {
-            Process process = new ProcessBuilder("ln", "-sf", "--", source.toString(), target.toString()).start();
+            Process process = new ProcessBuilder("ln", "-sf", "--", linkTarget, target.toString()).start();
             if (process.waitFor() == 0) {
                 return;
             }

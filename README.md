@@ -59,10 +59,6 @@ server/build/install/server/bin/server -p 8080 -d /var/lib/password
 | `-p`   | `8080`  | TCP port, on all interfaces |
 | `-d`   | `.`     | Data directory            |
 
-Pass `-d` as an absolute path (or leave it at `.`). With a relative path such as `-d data`, the `latest` symlink
-points to the wrong place and the server cannot read back what it stored
-([#27](https://github.com/yawkat/password-java/issues/27)).
-
 The server speaks plain HTTP. Put a TLS-terminating reverse proxy in front of it. Requests larger than 4 MB are
 rejected with 413.
 
@@ -156,8 +152,7 @@ storageDir=~/.local/share/password
 
 Set `url` to your own server: the default is the author's. You can also enter the URL on the unlock screen.
 
-Use an absolute path (or `~/...`) for `storageDir`, on a file system with symlinks. A relative path breaks the
-`latest` symlink as it does for the server's `-d` ([#27](https://github.com/yawkat/password-java/issues/27)).
+Put `storageDir` on a file system with symlinks. A relative path resolves against the working directory.
 
 The local copy uses the same layout as the server's data directory (timestamped files plus `latest`). The app writes
 `url` back to the file when you change the server URL in the UI. Other keys are kept, comments are not.

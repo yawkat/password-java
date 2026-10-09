@@ -182,18 +182,20 @@ public class DatabaseStateTest {
     }
 
     /**
-     * With a relative data directory such as the default ".", the 2FA vault's `latest` link must still point to the
-     * database.
+     * With a relative data directory other than ".", the `latest` links of both vaults must still point to the
+     * database (#27).
      */
     @Test
-    public void testTotpWithRelativeDataDirectory() throws Exception {
+    public void testRelativeDataDirectory() throws Exception {
         Path relative = Path.of("").toAbsolutePath().relativize(dir.toAbsolutePath());
         Vaults vaults = new Vaults(relative.toString());
-        ServerAuth auth = new ServerAuth();
-        Assert.assertTrue(vaults.totp.registerIfUnregistered(auth.registration()));
-        byte[] db = auth.database(100);
-        vaults.totp.saveDatabase(db);
-        Assert.assertEquals(vaults.totp.loadDatabase(), db);
+        for (DatabaseState vault : new DatabaseState[]{ vaults.passwords, vaults.totp }) {
+            ServerAuth auth = new ServerAuth();
+            Assert.assertTrue(vault.registerIfUnregistered(auth.registration()));
+            byte[] db = auth.database(100);
+            vault.saveDatabase(db);
+            Assert.assertEquals(vault.loadDatabase(), db);
+        }
     }
 
     @Test
