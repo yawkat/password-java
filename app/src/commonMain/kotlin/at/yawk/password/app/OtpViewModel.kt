@@ -34,6 +34,12 @@ private val log = LoggerFactory.getLogger(OtpViewModel::class.java)
 const val OTP_IDLE_LOCK_TIMEOUT_MS = 5 * 60 * 1000L
 
 /**
+ * How long the 2FA vault stays unlocked in the background (Android) while the editor or the import has unsaved
+ * changes, e.g. to copy a secret from the browser. Without such changes, it locks right away.
+ */
+const val OTP_BACKGROUND_DRAFT_TIMEOUT_MS = 60 * 1000L
+
+/**
  * Owns the unlocked [OtpStore] of the 2FA vault and exposes it as [state], like [PasswordViewModel] does for the
  * password database. The two are independent: the 2FA vault has its own password, the backup password.
  *
@@ -49,6 +55,7 @@ class OtpViewModel(
     /** Monotonic clock in milliseconds, for the idle lock */
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val idleLockTimeoutMs: Long = OTP_IDLE_LOCK_TIMEOUT_MS,
+    private val backgroundDraftTimeoutMs: Long = OTP_BACKGROUND_DRAFT_TIMEOUT_MS,
 ) : ViewModel() {
     private val _state = MutableStateFlow<OtpState>(OtpState.Closed)
     val state: StateFlow<OtpState> = _state.asStateFlow()
@@ -176,6 +183,8 @@ class OtpViewModel(
         pendingClient = null
         idleLock?.cancel()
         idleLock = null
+        backgroundLock?.cancel()
+        backgroundLock = null
         val password = password
         this.password = null
         _state.value = OtpState.Locked(config)
@@ -187,6 +196,43 @@ class OtpViewModel(
             }
         } else {
             viewModelScope.launch { mutex.withLock { password?.wipe() } }
+        }
+    }
+
+    /** [clock] time when the app went to the background with unsaved changes, while it is there */
+    private var backgroundSince: Long? = null
+    private var backgroundLock: Job? = null
+
+    /**
+     * The app went to the background (Android): lock right away, or after [backgroundDraftTimeoutMs] if there are
+     * unsaved changes, so that they survive a short trip to another app.
+     */
+    fun onBackground() {
+        if (backgroundSince != null) return
+        if (_state.value !is OtpState.Unlocked || !screenState.isModified) {
+            lockNow()
+            return
+        }
+        backgroundSince = clock()
+        backgroundLock = viewModelScope.launch {
+            delay(backgroundDraftTimeoutMs)
+            lockNow()
+        }
+    }
+
+    /**
+     * The app is in the foreground again. Locks now if it was away for too long: the timer of [onBackground] may not
+     * have run while the process was frozen.
+     */
+    fun onForeground() {
+        val since = backgroundSince ?: return
+        backgroundSince = null
+        backgroundLock?.cancel()
+        backgroundLock = null
+        if (clock() - since >= backgroundDraftTimeoutMs) {
+            lockNow()
+        } else {
+            onActivity()
         }
     }
 

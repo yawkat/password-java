@@ -43,7 +43,10 @@ class OtpViewModelTest {
         server.close()
     }
 
-    private fun newViewModel(idleLockTimeoutMs: Long = OTP_IDLE_LOCK_TIMEOUT_MS): OtpViewModel {
+    private fun newViewModel(
+        idleLockTimeoutMs: Long = OTP_IDLE_LOCK_TIMEOUT_MS,
+        backgroundDraftTimeoutMs: Long = OTP_BACKGROUND_DRAFT_TIMEOUT_MS,
+    ): OtpViewModel {
         val store = ViewModelStore().also { stores += it }
         val factory = viewModelFactory {
             initializer {
@@ -54,6 +57,7 @@ class OtpViewModelTest {
                         VaultClient.otp(url, storage, VaultKey.ofPassword(password))
                     },
                     idleLockTimeoutMs = idleLockTimeoutMs,
+                    backgroundDraftTimeoutMs = backgroundDraftTimeoutMs,
                 )
             }
         }
@@ -180,6 +184,35 @@ class OtpViewModelTest {
         assertTrue(vm.state.value is OtpState.Unlocked)
         vm.await<OtpState.Locked>()
         assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped on idle lock")
+    }
+
+    @Test
+    fun backgroundLocksRightAway() {
+        val vm = newViewModel()
+        vm.create("backup")
+        vm.onBackground()
+        assertTrue(vm.state.value is OtpState.Locked)
+        vm.onForeground()
+        assertTrue(vm.state.value is OtpState.Locked)
+    }
+
+    /**
+     * An unsaved draft survives a short trip to another app (e.g. to copy the secret), but not a long one.
+     */
+    @Test
+    fun backgroundKeepsDraftsForAWhile() {
+        val vm = newViewModel(backgroundDraftTimeoutMs = 300)
+        vm.create("backup")
+        vm.screenState.startEditing(null)
+        vm.screenState.draft = vm.screenState.draft.copy(issuer = "GitHub")
+        vm.onBackground()
+        vm.onForeground()
+        assertTrue(vm.state.value is OtpState.Unlocked)
+        assertEquals("GitHub", vm.screenState.draft.issuer)
+
+        vm.onBackground()
+        vm.await<OtpState.Locked>()
+        assertEquals("", vm.screenState.draft.issuer, "drafts are gone with the session")
     }
 
     @Test

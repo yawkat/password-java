@@ -211,7 +211,8 @@ Open the vault with *2FA codes* on the unlock screen. The first time, the app of
   fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
   for the sites that use Authy's own tokens, such as Cloudflare. HOTP (counter-based) and Steam codes are not supported.
 - Each account has a free text field for its backup codes. Keep them here rather than in the password database.
-- The vault locks after five minutes without activity, and on Android as soon as the app goes to the background.
+- The vault locks after five minutes without activity, and on Android as soon as the app goes to the background (after
+  a minute if an account is being edited, e.g. while you copy its secret from the browser).
 
 The local copy of the vault is kept in `storageDir/totp` (desktop) or in the app's private storage (Android).
 

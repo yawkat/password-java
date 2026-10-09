@@ -31,13 +31,12 @@ class OtpAccountsTest {
             existing,
         )
         assertEquals(listOf(2, 4, 5, 6, 7), lines.map { it.lineNumber })
-        // already in the vault
-        assertTrue(lines[0].duplicate)
+        assertEquals(ImportDuplicate.IN_VAULT, lines[0].duplicate)
         assertEquals("Cloudflare", lines[1].account?.issuer)
         assertEquals(7, lines[1].account?.digits)
-        assertFalse(lines[1].duplicate)
+        assertNull(lines[1].duplicate)
         // the same secret as an earlier line, in another spelling
-        assertTrue(lines[2].duplicate)
+        assertEquals(ImportDuplicate.EARLIER_LINE, lines[2].duplicate)
         assertNull(lines[3].account)
         assertTrue(lines[3].error!!.contains("hotp"))
         // errors never repeat the line, which may hold a secret

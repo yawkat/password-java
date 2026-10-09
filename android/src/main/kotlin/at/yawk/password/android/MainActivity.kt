@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // locks right away if the app was in the background for too long, before anything is drawn
         viewModel.onForeground()
+        otpViewModel.onForeground()
     }
 
     override fun onStop() {
@@ -59,9 +60,9 @@ class MainActivity : ComponentActivity() {
         if (!isChangingConfigurations) {
             hooks.onBackground()
             viewModel.onBackground()
-            // Unlike the password database, the 2FA vault locks right away. The code was copied already, and with
-            // the fingerprint unlock (to come) opening it again is quick.
-            otpViewModel.lockNow()
+            // Unlike the password database, the 2FA vault locks right away (unless an unsaved draft is open): the
+            // code was copied already, and with the fingerprint unlock (to come) opening it again is quick.
+            otpViewModel.onBackground()
         }
     }
 }

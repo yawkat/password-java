@@ -236,17 +236,18 @@ private fun isEnter(event: KeyEvent) =
     event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.NumPadEnter)
 
 /**
- * The current time, updated every second.
+ * The current time, updated every second. Only the composables that show codes read it (through the returned
+ * function), so that only they recompose every second, not the whole screen.
  */
 @Composable
-private fun rememberNow(): Long {
-    val now by produceState(System.currentTimeMillis()) {
+private fun rememberClock(): () -> Long {
+    val now = produceState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
             delay(1000 - value % 1000)
         }
     }
-    return now
+    return remember(now) { { now.value } }
 }
 
 /**
@@ -264,10 +265,10 @@ private fun OtpScreen(
 ) {
     val scope = rememberCoroutineScope()
     val searchFocus = remember { FocusRequester() }
-    val now = rememberNow()
+    val clock = rememberClock()
     val latest by rememberUpdatedState(state)
     val busy = state.busy
-    val visible = filterAccounts(state.accounts, ui.query.text)
+    val visible = remember(state.accounts, ui.query.text) { filterAccounts(state.accounts, ui.query.text) }
 
     // ---- actions ----
 
@@ -382,6 +383,8 @@ private fun OtpScreen(
     }
     SideEffect { hooks.keyHandler = shortcuts }
     PlatformBackHandler(enabled = ui.page != OtpPage.List || ui.query.text.isNotEmpty()) { back() }
+    // typing on a soft keyboard sends no key events: count the edits as activity for the idle lock
+    LaunchedEffect(ui.query.text, ui.draft, ui.uri, ui.importText) { viewModel.onActivity() }
 
     if (!touchInput) {
         LaunchedEffect(Unit) { searchFocus.requestFocus() }
@@ -446,8 +449,9 @@ private fun OtpScreen(
                     )
                 }
                 LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                    items(visible, key = { it.id }) { account ->
-                        AccountRow(account, now, onCopy = { copy(account) }, onOpen = { ui.openDetail(account) })
+                    // no keys: the ids of a vault written by other software may repeat, which keys don't allow
+                    items(visible) { account ->
+                        AccountRow(account, clock, onCopy = { copy(account) }, onOpen = { ui.openDetail(account) })
                         HorizontalDivider()
                     }
                 }
@@ -468,7 +472,7 @@ private fun OtpScreen(
                     HorizontalDivider()
                     AccountDetail(
                         account,
-                        now,
+                        clock,
                         backupCodesShown = ui.backupCodesShown,
                         onToggleBackupCodes = { ui.backupCodesShown = !ui.backupCodesShown },
                         onCopy = { copy(account) },
@@ -482,16 +486,17 @@ private fun OtpScreen(
                     onBack = ::back,
                     backEnabled = !busy,
                 ) {
-                    Button(onClick = { save(page.id) }, enabled = !busy && ui.draft.toAccount(page.id).isSuccess) {
+                    val valid = remember(ui.draft, page.id) { ui.draft.toAccount(page.id).isSuccess }
+                    Button(onClick = { save(page.id) }, enabled = !busy && valid) {
                         Text("Save")
                     }
                 }
                 HorizontalDivider()
-                AccountEditor(ui, page.id, now, enabled = !busy, modifier = Modifier.weight(1f))
+                AccountEditor(ui, page.id, clock, enabled = !busy, modifier = Modifier.weight(1f))
             }
             OtpPage.Import -> {
-                val lines = parseImport(ui.importText, state.accounts)
-                val accounts = lines.filter { it.account != null && !it.duplicate }.map { it.account!! }
+                val lines = remember(ui.importText, state.accounts) { parseImport(ui.importText, state.accounts) }
+                val accounts = lines.filter { it.account != null && it.duplicate == null }.map { it.account!! }
                 CompactBar(title = "Import", onBack = ::back, backEnabled = !busy) {
                     Button(onClick = { import(accounts) }, enabled = !busy && accounts.isNotEmpty()) {
                         Text("Import ${accounts.size}")
@@ -501,7 +506,7 @@ private fun OtpScreen(
                 ImportPage(
                     ui,
                     lines,
-                    now,
+                    clock,
                     enabled = !busy,
                     onPickFile = if (viewModel.canPickTextFile) {
                         { scope.launch { viewModel.pickImportFile()?.let { ui.importText = it } } }
@@ -597,10 +602,26 @@ private fun NextCode(account: OtpAccount, now: Long) {
 }
 
 /**
+ * The current code with its countdown, for previews.
+ */
+@Composable
+private fun LiveCode(account: OtpAccount, clock: () -> Long, style: androidx.compose.ui.text.TextStyle) {
+    val now = clock()
+    Text(
+        codeOrNull(account, now)?.let(::formatCode) ?: "invalid",
+        style = style,
+        fontFamily = FontFamily.Monospace,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    Countdown(account, now)
+}
+
+/**
  * An account in the list: name, then the code below it, so that both fit on a phone.
  */
 @Composable
-private fun AccountRow(account: OtpAccount, now: Long, onCopy: () -> Unit, onOpen: () -> Unit) {
+private fun AccountRow(account: OtpAccount, clock: () -> Long, onCopy: () -> Unit, onOpen: () -> Unit) {
+    val now = clock()
     val code = codeOrNull(account, now)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onCopy).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
@@ -635,12 +656,13 @@ private fun AccountRow(account: OtpAccount, now: Long, onCopy: () -> Unit, onOpe
 @Composable
 private fun AccountDetail(
     account: OtpAccount,
-    now: Long,
+    clock: () -> Long,
     backupCodesShown: Boolean,
     onToggleBackupCodes: () -> Unit,
     onCopy: () -> Unit,
     modifier: Modifier,
 ) {
+    val now = clock()
     val code = codeOrNull(account, now)
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -693,9 +715,9 @@ private fun AccountDetail(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AccountEditor(ui: OtpScreenState, id: String?, now: Long, enabled: Boolean, modifier: Modifier) {
+private fun AccountEditor(ui: OtpScreenState, id: String?, clock: () -> Long, enabled: Boolean, modifier: Modifier) {
     val draft = ui.draft
-    val parsed = draft.toAccount(id)
+    val parsed = remember(draft, id) { draft.toAccount(id) }
     var uriError by remember { mutableStateOf<String?>(null) }
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -801,13 +823,7 @@ private fun AccountEditor(ui: OtpScreenState, id: String?, now: Long, enabled: B
             onSuccess = { account ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Current code:")
-                    Text(
-                        codeOrNull(account, now)?.let(::formatCode) ?: "invalid",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Countdown(account, now)
+                    LiveCode(account, clock, MaterialTheme.typography.titleLarge)
                 }
             },
             onFailure = {
@@ -832,7 +848,7 @@ private fun AccountEditor(ui: OtpScreenState, id: String?, now: Long, enabled: B
 private fun ImportPage(
     ui: OtpScreenState,
     lines: List<ImportLine>,
-    now: Long,
+    clock: () -> Long,
     enabled: Boolean,
     onPickFile: (() -> Unit)?,
     modifier: Modifier,
@@ -877,22 +893,18 @@ private fun ImportPage(
                     Column(Modifier.weight(1f)) {
                         Text(accountTitle(account), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (line.duplicate) {
-                                "Line ${line.lineNumber}: already in the vault, skipped"
-                            } else {
-                                "Line ${line.lineNumber}: ${accountSubtitle(account)}"
+                            when (line.duplicate) {
+                                ImportDuplicate.IN_VAULT -> "Line ${line.lineNumber}: already in the vault, skipped"
+                                ImportDuplicate.EARLIER_LINE ->
+                                    "Line ${line.lineNumber}: the same as an earlier line, skipped"
+                                null -> "Line ${line.lineNumber}: ${accountSubtitle(account)}"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (!line.duplicate) {
-                        Text(
-                            codeOrNull(account, now)?.let(::formatCode) ?: "invalid",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                        Countdown(account, now)
+                    if (line.duplicate == null) {
+                        LiveCode(account, clock, MaterialTheme.typography.titleMedium)
                     }
                 }
             }

@@ -126,28 +126,41 @@ data class OtpDraft(
  *
  * @property account The account of the line, or `null` if it could not be read.
  * @property error Why the line could not be read. Never contains the line, which may hold a secret.
- * @property duplicate The vault, or an earlier line, has an account with the same secret already.
+ * @property duplicate Whether the vault or an earlier line has an account with the same secret already, which is then
+ * skipped.
  */
 data class ImportLine(
     val lineNumber: Int,
     val account: OtpAccount?,
     val error: String?,
-    val duplicate: Boolean = false,
+    val duplicate: ImportDuplicate? = null,
 )
+
+enum class ImportDuplicate {
+    IN_VAULT,
+    EARLIER_LINE,
+}
 
 /**
  * Read an import: one `otpauth://` URI per line, as written by the Authy extraction scripts and the plain text exports
  * of Aegis, Ente and others. Empty lines and lines starting with `#` are skipped.
  */
 fun parseImport(text: String, existing: List<OtpAccount>): List<ImportLine> {
-    val secrets = existing.mapNotNullTo(HashSet()) { it.secret }
+    val inVault = existing.mapNotNullTo(HashSet()) { it.secret }
+    val imported = HashSet<String>()
     val lines = mutableListOf<ImportLine>()
     text.lineSequence().forEachIndexed { index, raw ->
         val line = raw.trim()
         if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
         lines += try {
             val account = OtpAuthUri.parse(line)
-            ImportLine(index + 1, account, null, duplicate = !secrets.add(account.secret.orEmpty()))
+            val secret = account.secret.orEmpty()
+            val duplicate = when {
+                secret in inVault -> ImportDuplicate.IN_VAULT
+                !imported.add(secret) -> ImportDuplicate.EARLIER_LINE
+                else -> null
+            }
+            ImportLine(index + 1, account, null, duplicate)
         } catch (e: IllegalArgumentException) {
             ImportLine(index + 1, null, e.message ?: "Invalid line")
         }
