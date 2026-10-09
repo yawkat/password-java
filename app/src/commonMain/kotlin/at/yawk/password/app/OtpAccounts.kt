@@ -45,6 +45,23 @@ fun codeOrNull(account: OtpAccount, unixMillis: Long): String? = try {
 }
 
 /**
+ * Copy the next code instead of the current one once the current one is valid for less than this: by the time it is
+ * pasted and sent, the current code would have expired. Verifiers usually accept a code one period early or late.
+ */
+const val COPY_NEXT_CODE_MS = 5000L
+
+/**
+ * The code to copy at [unixMillis] (see [COPY_NEXT_CODE_MS]), and whether it is the next one rather than the current
+ * one, or `null` if the account is invalid.
+ */
+fun codeToCopy(account: OtpAccount, unixMillis: Long): Pair<String, Boolean>? {
+    val current = codeOrNull(account, unixMillis) ?: return null
+    val remaining = Totp.millisUntilNext(account, unixMillis)
+    if (remaining >= COPY_NEXT_CODE_MS) return current to false
+    return (codeOrNull(account, unixMillis + remaining) ?: return null) to true
+}
+
+/**
  * The letter on an account's avatar.
  */
 fun avatarLetter(account: OtpAccount): String =
