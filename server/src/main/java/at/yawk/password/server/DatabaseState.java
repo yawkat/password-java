@@ -5,10 +5,7 @@ import at.yawk.password.FileLocalStorageProvider;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.MultiFileLocalStorageProvider;
 import at.yawk.password.PlatformDependent;
-import io.micronaut.context.annotation.Context;
-import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
-import jakarta.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -30,20 +27,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Server state: the stored database and registration, the nonces of recently accepted requests, and the backoff after
- * failed signatures.
- *
- * <p>Eagerly created ({@link Context}) so that problems with the data directory show up at startup rather than on the
- * first request.
+ * State of one vault (see {@link Vaults}): the stored database and registration, the nonces of recently accepted
+ * requests, and the backoff after failed signatures.
  *
  * @author yawkat
  */
-@Context
 public class DatabaseState {
-    /**
-     * Directory holding the database versions and the registration.
-     */
-    public static final String DATA_DIR_PROPERTY = "password.data-dir";
 
     /**
      * Upper bound on remembered nonces. Only requests with a valid signature add one, so only the owner can fill it.
@@ -70,7 +59,8 @@ public class DatabaseState {
 
     private final LocalStorageProvider databaseStorageProvider;
     private final FileLocalStorageProvider registrationStorageProvider;
-    private final File legacySharedSecret;
+    @Nullable private final File legacySharedSecret;
+    private final File directory;
     private final NonceMemory nonces = new NonceMemory(MAX_REMEMBERED_NONCES, MAX_REQUEST_AGE_MILLIS);
     /**
      * The registration file, which never changes once written. The operator resets a server while it is stopped.
@@ -84,9 +74,25 @@ public class DatabaseState {
     private int consecutiveFailures = 0;
     private long blockedUntil = 0;
 
-    @Inject
-    DatabaseState(@Property(name = DATA_DIR_PROPERTY, defaultValue = ".") String dataDirectory) throws IOException {
-        File dir = new File(dataDirectory);
+    /**
+     * The password vault, in the data directory itself.
+     */
+    DatabaseState(String dataDirectory) throws IOException {
+        this(new File(dataDirectory), new File(dataDirectory, "shared-secret"));
+    }
+
+    /**
+     * @param dir The vault's directory. If it doesn't exist yet, it is created (owner-only) on registration.
+     * @param legacySharedSecret The shared secret of the old protocol, which only the password vault can have. It is
+     * deleted on registration.
+     * @throws IOException if the directory exists, but is not a directory that the server can read and write
+     */
+    DatabaseState(File dir, @Nullable File legacySharedSecret) throws IOException {
+        this.directory = dir;
+        this.legacySharedSecret = legacySharedSecret;
+        if (dir.exists() && !(dir.isDirectory() && dir.canRead() && dir.canWrite() && dir.canExecute())) {
+            throw new IOException(dir + " is not a directory that the server can read and write");
+        }
         warnIfAccessibleByOthers(dir.toPath());
 
         registrationStorageProvider = new FileLocalStorageProvider(new File(dir, "verifier"));
@@ -102,8 +108,7 @@ public class DatabaseState {
         }
         databaseStorageProvider = new MultiFileLocalStorageProvider(dir);
 
-        legacySharedSecret = new File(dir, "shared-secret");
-        if (legacySharedSecret.exists() && registration == null) {
+        if (legacySharedSecret != null && legacySharedSecret.exists() && registration == null) {
             log.warn("Found the shared secret of the old protocol but no registration. Migrate by unlocking with the " +
                      "new client, see the README; the old secret is deleted on registration.");
         }
@@ -150,9 +155,12 @@ public class DatabaseState {
         if (isRegistered()) {
             return false;
         }
+        if (!directory.isDirectory()) {
+            PlatformDependent.createOwnerOnlyDirectory(directory.toPath());
+        }
         registrationStorageProvider.save(registration);
         this.registration = registration.clone();
-        if (legacySharedSecret.delete()) {
+        if (legacySharedSecret != null && legacySharedSecret.delete()) {
             log.info("Deleted the shared secret of the old protocol");
         }
         return true;

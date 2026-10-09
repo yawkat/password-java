@@ -26,6 +26,10 @@ class DatabaseClient {
      * Base URL without trailing slash: the signature covers the path, which must be what the server sees.
      */
     private final String url;
+    /**
+     * Path prefix of the vault, {@code ""} or {@link AuthProtocol#TOTP_VAULT_PREFIX}. Part of the signed path.
+     */
+    private final String pathPrefix;
 
     /**
      * Without timeouts, a half-open connection (e.g. after switching networks) would block forever, and with it the
@@ -40,10 +44,15 @@ class DatabaseClient {
     private volatile long clockOffsetMillis = 0;
 
     DatabaseClient(String url) {
+        this(url, "");
+    }
+
+    DatabaseClient(String url, String pathPrefix) {
         while (url.endsWith("/")) {
             url = url.substring(0, url.length() - 1);
         }
         this.url = url;
+        this.pathPrefix = pathPrefix;
     }
 
     /**
@@ -53,7 +62,7 @@ class DatabaseClient {
     byte[] getInstallSalt() throws IOException {
         byte[] response;
         try {
-            response = send("GET", "/salt", null, null).body;
+            response = send("GET", pathPrefix + "/salt", null, null).body;
         } catch (FileNotFoundException e) {
             return null;
         }
@@ -78,18 +87,18 @@ class DatabaseClient {
         body[0] = AuthProtocol.VERSION;
         System.arraycopy(keys.getInstallSalt(), 0, body, 1, AuthProtocol.SALT_LENGTH);
         System.arraycopy(keys.getPublicKey(), 0, body, 1 + AuthProtocol.SALT_LENGTH, AuthProtocol.PUBLIC_KEY_LENGTH);
-        send("PUT", "/register", null, body);
+        send("PUT", pathPrefix + "/register", null, body);
     }
 
     /**
      * @throws FileNotFoundException if the server has no database yet
      */
     byte[] getDatabase(KeyMaterial keys) throws IOException {
-        return sendSigned("GET", "/db", keys, null);
+        return sendSigned("GET", pathPrefix + "/db", keys, null);
     }
 
     void putDatabase(KeyMaterial keys, byte[] data) throws IOException {
-        sendSigned("PUT", "/db", keys, data);
+        sendSigned("PUT", pathPrefix + "/db", keys, data);
     }
 
     private byte[] sendSigned(String method, String path, KeyMaterial keys, @Nullable byte[] body) throws IOException {

@@ -128,7 +128,7 @@ public class ProtocolTest {
         // saving offline keeps the change locally
         Assert.expectThrows(IOException.class, () -> offline.save(data("b")));
         Assert.assertEquals(BlobCodec.decrypt(new ObjectMapper(), KeyMaterial.derive(
-                PASSWORD, BlobCodec.installSalt(storage.load())), storage.load()).getData(), data("b"));
+                PASSWORD, BlobCodec.installSalt(storage.load())), storage.load(), PasswordBlob.class).getData(), data("b"));
     }
 
     @Test

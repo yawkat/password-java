@@ -31,6 +31,7 @@ final class KeyMaterial {
     static final int ARGON2_ITERATIONS = 4;
     static final int ARGON2_PARALLELISM = 4;
     private static final int KEY_LENGTH = 32;
+    static final int ROOT_KEY_LENGTH = KEY_LENGTH;
 
     private static final byte[] AUTH_INFO = "at.yawk.password/v1/auth".getBytes(StandardCharsets.UTF_8);
     private static final byte[] CONTAINER_INFO = "at.yawk.password/v1/container".getBytes(StandardCharsets.UTF_8);
@@ -64,6 +65,24 @@ final class KeyMaterial {
         generator.generateBytes(password, rootKey);
         log.debug("Key derivation took {} ms", (System.nanoTime() - start) / 1_000_000);
         return new KeyMaterial(installSalt, rootKey);
+    }
+
+    /**
+     * Keys from a root key that {@link #getRootKey} exported earlier, without the password.
+     */
+    static KeyMaterial fromRootKey(byte[] installSalt, byte[] rootKey) {
+        if (installSalt.length != AuthProtocol.SALT_LENGTH || rootKey.length != KEY_LENGTH) {
+            throw new IllegalArgumentException("Invalid install salt or root key length");
+        }
+        return new KeyMaterial(installSalt, rootKey.clone());
+    }
+
+    /**
+     * @return A copy of the root key, to be wiped by the caller. It opens the vault like the password, but only for
+     * this install salt.
+     */
+    byte[] getRootKey() {
+        return rootKey.clone();
     }
 
     byte[] getInstallSalt() {

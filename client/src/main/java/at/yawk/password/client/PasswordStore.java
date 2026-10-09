@@ -9,24 +9,15 @@ import java.util.function.UnaryOperator;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Holds the decrypted password database and persists modifications through a {@link PasswordClient}.
- * <p>
- * The blob is copy-on-write: every modification builds a new blob, saves it, and only replaces the current state
- * once the save succeeded. Entries are treated as immutable and identified by object identity. Mutating methods
- * block (key derivation, network) and must not be called from the UI thread; {@link #getEntries()} may be called from any
- * thread.
+ * Holds the decrypted password database and persists modifications through a {@link PasswordClient}, see
+ * {@link VaultStore}. Entries are treated as immutable and identified by object identity.
  *
  * @author yawkat
  */
-public final class PasswordStore {
-    private final PasswordClient client;
-    private volatile PasswordBlob blob;
-    @Nullable private volatile ClientValue.LocalReason localReason;
-
-    private PasswordStore(PasswordClient client, PasswordBlob blob, @Nullable ClientValue.LocalReason localReason) {
-        this.client = client;
-        this.blob = blob;
-        this.localReason = localReason;
+public final class PasswordStore extends VaultStore<PasswordBlob> {
+    private PasswordStore(VaultClient<PasswordBlob> client, PasswordBlob blob,
+                          @Nullable ClientValue.LocalReason localReason) {
+        super(client, blob, localReason);
     }
 
     /**
@@ -50,34 +41,18 @@ public final class PasswordStore {
         return new PasswordStore(client, new PasswordBlob(), null);
     }
 
+    @Override
+    PasswordBlob emptyData() {
+        return new PasswordBlob();
+    }
+
     public List<PasswordEntry> getEntries() {
-        return Collections.unmodifiableList(blob.getPasswords());
-    }
-
-    /**
-     * @return Whether the current data is the local copy rather than the server copy, see {@link #getLocalReason()}.
-     */
-    public boolean isFromLocalStorage() {
-        return localReason != null;
-    }
-
-    /**
-     * @return Why the current data is the local copy, or {@code null} if it is the server copy.
-     */
-    @Nullable
-    public ClientValue.LocalReason getLocalReason() {
-        return localReason;
-    }
-
-    public synchronized void reload() throws Exception {
-        ClientValue<PasswordBlob> value = client.load();
-        blob = value.getValue() == null ? new PasswordBlob() : value.getValue();
-        localReason = value.getLocalReason();
+        return Collections.unmodifiableList(getData().getPasswords());
     }
 
     public PasswordEntry add(String name, String value) throws Exception {
         PasswordEntry entry = entry(name, value);
-        modify(entries -> {
+        modifyEntries(entries -> {
             entries.add(entry);
             return entries;
         });
@@ -86,7 +61,7 @@ public final class PasswordStore {
 
     public PasswordEntry update(PasswordEntry old, String name, String value) throws Exception {
         PasswordEntry entry = entry(name, value);
-        modify(entries -> {
+        modifyEntries(entries -> {
             entries.set(indexOf(entries, old), entry);
             return entries;
         });
@@ -94,19 +69,18 @@ public final class PasswordStore {
     }
 
     public void delete(PasswordEntry old) throws Exception {
-        modify(entries -> {
+        modifyEntries(entries -> {
             entries.remove(indexOf(entries, old));
             return entries;
         });
     }
 
-    private synchronized void modify(UnaryOperator<List<PasswordEntry>> operation) throws Exception {
-        PasswordBlob copy = new PasswordBlob();
-        copy.setPasswords(operation.apply(new ArrayList<>(blob.getPasswords())));
-        client.save(copy);
-        blob = copy;
-        // the remote now has our state, whatever it had before
-        localReason = null;
+    private void modifyEntries(UnaryOperator<List<PasswordEntry>> operation) throws Exception {
+        modify(blob -> {
+            PasswordBlob copy = new PasswordBlob();
+            copy.setPasswords(operation.apply(new ArrayList<>(blob.getPasswords())));
+            return copy;
+        });
     }
 
     private static int indexOf(List<PasswordEntry> entries, PasswordEntry entry) {

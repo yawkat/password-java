@@ -27,6 +27,13 @@ public class AuthProtocol {
 
     public static final String AUTH_HEADER = "X-Auth";
 
+    /**
+     * Path prefix of the 2FA vault: {@code /totp/salt}, {@code /totp/register} and {@code /totp/db} work like the
+     * paths of the password vault, with their own registration. The signature covers the path, so a request for one
+     * vault is never accepted by the other.
+     */
+    public static final String TOTP_VAULT_PREFIX = "/totp";
+
     public static final int SALT_LENGTH = 32;
     public static final int PUBLIC_KEY_LENGTH = 32;
     public static final int SIGNATURE_LENGTH = 64;

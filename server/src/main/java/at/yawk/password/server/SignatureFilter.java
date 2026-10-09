@@ -20,20 +20,23 @@ import java.time.format.DateTimeFormatter;
 /**
  * First half of the request signature check for routes annotated with {@link Required}: everything that doesn't need
  * the body (header syntax, timestamp, replayed nonce, backoff), so that such requests are rejected before their body
- * is read. The signature itself covers the body, so the controller checks it with {@link #verify}.
+ * is read. The signature itself covers the body, so the controller checks it with {@link #verify}. Each vault has its
+ * own nonces and backoff.
  *
  * @author yawkat
  */
-@ServerFilter(patterns = { "/db", "/db/" })
+@ServerFilter(patterns = {
+        "/db", "/db/", AuthProtocol.TOTP_VAULT_PREFIX + "/db", AuthProtocol.TOTP_VAULT_PREFIX + "/db/"
+})
 @SignatureFilter.Required
 class SignatureFilter extends RouteAnnotationFilter {
     private static final String HEADER_ATTRIBUTE = SignatureFilter.class.getName() + ".header";
 
-    private final DatabaseState state;
+    private final Vaults vaults;
 
-    SignatureFilter(DatabaseState state) {
+    SignatureFilter(Vaults vaults) {
         super(Required.class);
-        this.state = state;
+        this.vaults = vaults;
     }
 
     @Override
@@ -41,6 +44,7 @@ class SignatureFilter extends RouteAnnotationFilter {
     protected HttpResponse<?> filterRoute(HttpRequest<?> request) {
         DatabaseState.AuthHeader header =
                 DatabaseState.parseAuthHeader(request.getHeaders().get(AuthProtocol.AUTH_HEADER));
+        DatabaseState state = vaults.forPath(request.getPath());
         HttpResponse<?> rejection = rejection(state, state.preCheck(header));
         if (rejection == null) {
             request.setAttribute(HEADER_ATTRIBUTE, header);

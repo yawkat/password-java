@@ -38,5 +38,11 @@ public class ClientValue<T> {
          * The server has no database (or no registration) yet. The next save uploads.
          */
         NOT_ON_SERVER,
+        /**
+         * The server has no registration, and the client has an exported key ({@link VaultKey#ofExportedKey}), which
+         * can't create the vault again: it was reset on the server. Saves only reach the local copy, and fail. Unlock
+         * with the password to create the vault again.
+         */
+        VAULT_RESET,
     }
 }

@@ -1,6 +1,7 @@
 package at.yawk.password.client;
 
 import at.yawk.password.model.DecryptedBlob;
+import at.yawk.password.model.PasswordBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -44,7 +45,8 @@ class LegacyBlob {
                buf.getInt() == SALT_LENGTH;
     }
 
-    static DecryptedBlob decrypt(ObjectMapper objectMapper, byte[] password, byte[] blob) throws Exception {
+    static DecryptedBlob<PasswordBlob> decrypt(ObjectMapper objectMapper, byte[] password, byte[] blob)
+            throws Exception {
         if (!isLegacy(blob)) {
             throw new Exception("Invalid database: not a legacy database");
         }
@@ -76,7 +78,8 @@ class LegacyBlob {
             if (!MessageDigest.isEqual(actualMac, expectedMac)) {
                 throw new WrongPasswordException();
             }
-            return objectMapper.readerFor(DecryptedBlob.class).readValue(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
+            return objectMapper.readerFor(BlobCodec.decryptedType(objectMapper, PasswordBlob.class))
+                    .readValue(dec, HMAC_LENGTH, dec.length - HMAC_LENGTH);
         } finally {
             Arrays.fill(key, (byte) 0);
             if (dec != null) {

@@ -29,7 +29,7 @@ public final class TestServer implements AutoCloseable {
             server = ApplicationContext.run(EmbeddedServer.class, Map.of(
                     "micronaut.server.host", "127.0.0.1",
                     "micronaut.server.port", -1,
-                    DatabaseState.DATA_DIR_PROPERTY, dataDirectory.toString()
+                    Vaults.DATA_DIR_PROPERTY, dataDirectory.toString()
             ));
         } catch (RuntimeException e) {
             try {
@@ -46,8 +46,7 @@ public final class TestServer implements AutoCloseable {
      * Run the server clock this far ahead of the real one.
      */
     public void setClockOffset(long offsetMillis) {
-        server.getApplicationContext().getBean(DatabaseState.class).clock =
-                () -> System.currentTimeMillis() + offsetMillis;
+        server.getApplicationContext().getBean(Vaults.class).setClock(() -> System.currentTimeMillis() + offsetMillis);
     }
 
     public Path getDataDirectory() {

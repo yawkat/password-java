@@ -3,6 +3,7 @@ package at.yawk.password.client;
 import at.yawk.password.AuthProtocol;
 import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -29,7 +30,7 @@ class BlobCodec {
      */
     static final int PADDING = 4096;
 
-    static byte[] encrypt(ObjectMapper objectMapper, KeyMaterial keys, DecryptedBlob msg) throws Exception {
+    static byte[] encrypt(ObjectMapper objectMapper, KeyMaterial keys, DecryptedBlob<?> msg) throws Exception {
         ByteBuffer header = ByteBuffer.allocate(AuthProtocol.BLOB_HEADER_LENGTH);
         header.put(AuthProtocol.BLOB_MAGIC);
         header.put((byte) AuthProtocol.VERSION);
@@ -72,7 +73,8 @@ class BlobCodec {
                                   AuthProtocol.BLOB_INSTALL_SALT_OFFSET + AuthProtocol.SALT_LENGTH);
     }
 
-    static DecryptedBlob decrypt(ObjectMapper objectMapper, KeyMaterial keys, byte[] blob) throws Exception {
+    static <T> DecryptedBlob<T> decrypt(ObjectMapper objectMapper, KeyMaterial keys, byte[] blob, Class<T> dataClass)
+            throws Exception {
         byte[] installSalt = installSalt(blob);
         if (installSalt == null || blob.length < AuthProtocol.BLOB_HEADER_LENGTH + TAG_BITS / 8) {
             throw new Exception("Invalid database: bad header");
@@ -107,12 +109,16 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
-            return objectMapper.readerFor(DecryptedBlob.class).readValue(plaintext, 4, length);
+            return objectMapper.readerFor(decryptedType(objectMapper, dataClass)).readValue(plaintext, 4, length);
         } finally {
             Arrays.fill(key, (byte) 0);
             if (plaintext != null) {
                 Arrays.fill(plaintext, (byte) 0);
             }
         }
+    }
+
+    static JavaType decryptedType(ObjectMapper objectMapper, Class<?> dataClass) {
+        return objectMapper.getTypeFactory().constructParametricType(DecryptedBlob.class, dataClass);
     }
 }
