@@ -419,6 +419,51 @@ class PasswordViewModelTest {
             assertTrue(runBlocking { vm.delete(entry!!).await() })
         }
     }
+
+    /**
+     * The 2FA codes saved another URL meanwhile: an unlock with the configured one saves it again.
+     */
+    @Test
+    fun urlChangedByOtherViewModel() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        platform.config = platform.config.copy(url = "https://elsewhere.example.com")
+        vm.unlock(vm.effectiveUrl(""), "secret")
+        vm.await<UiState.ConfirmCreate>()
+        assertEquals(listOf(server.url), platform.savedUrls)
+        vm.cancelCreate()
+    }
+
+    /**
+     * The URL typed on the lock screen is kept in the state (e.g. while the 2FA codes are open), and saved once an
+     * unlock with it worked, also after a failed attempt with it.
+     */
+    @Test
+    fun typedUrl() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.editUrl("http://127.0.0.1:1")
+        assertEquals("http://127.0.0.1:1", (vm.state.value as UiState.Locked).config.url)
+        assertEquals(server.url, vm.effectiveUrl("  "))
+
+        // an unreachable server without a local copy: fails, the typed URL stays
+        vm.unlock("http://127.0.0.1:1", "secret")
+        val failed = vm.await { it is UiState.Locked && it.error != null } as UiState.Locked
+        assertEquals("http://127.0.0.1:1", failed.config.url)
+        assertTrue(platform.savedUrls.isEmpty())
+
+        // a working URL typed after it is saved
+        val other = FakeServer()
+        try {
+            vm.editUrl(other.url)
+            vm.unlock(other.url, "secret")
+            vm.await<UiState.ConfirmCreate>()
+            assertEquals(listOf(other.url), platform.savedUrls)
+            vm.cancelCreate()
+        } finally {
+            other.close()
+        }
+    }
 }
 
 class SecretsTest {

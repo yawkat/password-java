@@ -202,14 +202,30 @@ Open the vault with *2FA codes* on the unlock screen. The first time, the app of
 
 - Click or tap an account to copy its current code. Codes are cleared from the clipboard after 30 seconds, like
   passwords. Shortly before a code expires, the next one is shown as well.
-- *Add* takes the `otpauth://` link of a QR code (most sites show the link or the secret key next to the code), or the
-  fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
+- *Add* scans the QR code with the camera (Android), takes its `otpauth://` link (most sites show the link or the
+  secret key next to the code), or the fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
   for the sites that use Authy's own tokens, such as Cloudflare. HOTP (counter-based) and Steam codes are not supported.
 - Each account has a free text field for its backup codes. Keep them here rather than in the password database.
 - The vault locks after five minutes without activity, and on Android as soon as the app goes to the background (after
   a minute if an account is being edited, e.g. while you copy its secret from the browser).
 
 The local copy of the vault is kept in `storageDir/totp` (desktop) or in the app's private storage (Android).
+
+### Fingerprint (Android)
+
+After you open the vault with the backup password, the app offers to open it with your fingerprint from then on.
+Opening the 2FA codes (and coming back to the app after it locked them) then takes nothing but the fingerprint. The app
+keeps the vault's key (not the backup password) encrypted by a key in the Android Keystore, which only a strong
+biometric check unlocks, every time. The key belongs to the server it was enabled for, and is only used for that one.
+
+- Enrolling another fingerprint keeps it working. So whoever knows the phone's PIN can add their finger and open the
+  2FA codes; keep the PIN as safe as the codes.
+- Removing the screen lock destroys it. The app then asks for the backup password, and offers the fingerprint again.
+- *Forget fingerprint* on the lock screen deletes it.
+- Resetting the 2FA vault on the server (see [Registration](#registration)) locks out the fingerprint of every phone
+  that reaches the server, e.g. of a lost one: it deletes its key and needs the backup password again. A phone kept
+  offline still opens its local copy with the fingerprint, so after losing a phone, also regenerate the codes of
+  important accounts.
 
 ### Migrating from Authy
 

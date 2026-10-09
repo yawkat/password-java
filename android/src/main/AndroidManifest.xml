@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- scanning the QR codes of 2FA accounts; asked for when first used -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <!-- No backups or device transfers: the local copy is encrypted, but the settings and the copy don't need to
          leave the device, and restoring them makes little sense. -->

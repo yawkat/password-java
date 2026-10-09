@@ -14,9 +14,12 @@ sealed interface OtpState {
     data object Closed : OtpState
 
     /**
-     * Waiting for the backup password.
+     * Waiting for the backup password, or the fingerprint.
+     *
+     * @property fingerprint Whether a fingerprint key for this server is stored, so that
+     * [OtpViewModel.unlockWithFingerprint] works.
      */
-    data class Locked(val config: AppConfig, val error: String? = null) : OtpState
+    data class Locked(val config: AppConfig, val error: String? = null, val fingerprint: Boolean = false) : OtpState
 
     /**
      * Deriving keys and loading the vault.
@@ -35,6 +38,8 @@ sealed interface OtpState {
      * @property busy A modification or reload is running. Further modifications are refused until it is done.
      * @property status Transient status bar message.
      * @property error Error to show in a dialog until [OtpViewModel.dismissError].
+     * @property offerFingerprint Offer [OtpViewModel.enableFingerprint]: the vault was opened with the password, on a
+     * device that can keep a fingerprint key, and none is stored for this server.
      */
     data class Unlocked(
         val accounts: List<OtpAccount>,
@@ -42,6 +47,7 @@ sealed interface OtpState {
         val busy: Boolean = false,
         val status: StatusMessage? = null,
         val error: ErrorMessage? = null,
+        val offerFingerprint: Boolean = false,
     ) : OtpState {
         // compared by identity, like UiState.Unlocked: a reload gives equal but new account objects
         override fun equals(other: Any?) = other is Unlocked &&
@@ -49,7 +55,8 @@ sealed interface OtpState {
             localReason == other.localReason &&
             busy == other.busy &&
             status == other.status &&
-            error == other.error
+            error == other.error &&
+            offerFingerprint == other.offerFingerprint
 
         override fun hashCode() = System.identityHashCode(accounts)
     }

@@ -12,6 +12,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.app.AndroidPlatform
 import at.yawk.password.app.AndroidSecretClipboard
 import at.yawk.password.app.App
+import at.yawk.password.app.BiometricAuthenticator
 import at.yawk.password.app.OtpViewModel
 import at.yawk.password.app.PasswordViewModel
 import at.yawk.password.app.WindowHooks
@@ -39,10 +40,17 @@ class MainActivity : ComponentActivity() {
         // no screenshots, screen recordings or recents thumbnails of the passwords
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
+        // the fingerprint prompt needs the activity; the view model outlives it
+        otpViewModel.authenticator = BiometricAuthenticator(this)
         val clipboard = AndroidSecretClipboard.get(this)
         setContent {
             App(viewModel, otpViewModel, clipboard, hooks, onExit = ::finish, touchInput = true)
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        otpViewModel.authenticator = null
     }
 
     override fun onStart() {
@@ -61,7 +69,7 @@ class MainActivity : ComponentActivity() {
             hooks.onBackground()
             viewModel.onBackground()
             // Unlike the password database, the 2FA vault locks right away (unless an unsaved draft is open): the
-            // code was copied already, and with the fingerprint unlock (to come) opening it again is quick.
+            // code was copied already, and with the fingerprint unlock opening it again is quick.
             otpViewModel.onBackground()
         }
     }

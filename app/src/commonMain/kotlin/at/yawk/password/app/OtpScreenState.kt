@@ -44,6 +44,10 @@ class OtpScreenState {
     var draft by mutableStateOf(OtpDraft())
     /** The URI field of the editor */
     var uri by mutableStateOf("")
+    /** Why the last link (pasted or scanned) could not be read */
+    var uriError by mutableStateOf<String?>(null)
+    /** The editor shows the QR code scanner */
+    var scanning by mutableStateOf(false)
     var importText by mutableStateOf("")
     var dialog by mutableStateOf<OtpDialog?>(null)
     /** Whether the backup codes are shown on the detail page */
@@ -62,12 +66,28 @@ class OtpScreenState {
         val draft = if (account == null) OtpDraft() else OtpDraft.of(account)
         this.draft = draft
         uri = ""
+        uriError = null
+        scanning = false
         page = OtpPage.Edit(account?.id, draft)
     }
 
     fun openDetail(account: OtpAccount) {
         backupCodesShown = false
         page = OtpPage.Detail(account.id)
+    }
+
+    /**
+     * Fill in the editor from an `otpauth://` link, keeping the backup codes typed so far.
+     */
+    fun fillInFromUri(text: String) {
+        OtpDraft.fromUri(text, draft.backupCodes).fold(
+            onSuccess = {
+                draft = it
+                uri = ""
+                uriError = null
+            },
+            onFailure = { uriError = it.message },
+        )
     }
 
     fun startImport() {
@@ -79,6 +99,8 @@ class OtpScreenState {
         page = OtpPage.List
         draft = OtpDraft()
         uri = ""
+        uriError = null
+        scanning = false
         importText = ""
         backupCodesShown = false
     }

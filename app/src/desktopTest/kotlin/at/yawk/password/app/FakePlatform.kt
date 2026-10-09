@@ -33,4 +33,6 @@ class FakePlatform(
     override val canPickTextFile get() = true
 
     override fun pickTextFile() = textFile
+
+    override var otpKeyStore: OtpKeyStore? = null
 }

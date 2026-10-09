@@ -94,10 +94,12 @@ fun OtpApp(
     val password = remember(state is OtpState.Unlocked) { TextFieldState() }
     when (state) {
         OtpState.Closed -> {}
-        is OtpState.Locked -> OtpUnlockScreen(state.config, state.error, busy = false, password, viewModel, hooks)
-        is OtpState.Unlocking -> OtpUnlockScreen(state.config, null, busy = true, password, viewModel, hooks)
+        is OtpState.Locked ->
+            OtpUnlockScreen(state.config, state.error, busy = false, state.fingerprint, password, viewModel, hooks)
+        is OtpState.Unlocking ->
+            OtpUnlockScreen(state.config, null, busy = true, fingerprint = false, password, viewModel, hooks)
         is OtpState.ConfirmCreate -> {
-            OtpUnlockScreen(state.config, null, busy = true, password, viewModel, hooks)
+            OtpUnlockScreen(state.config, null, busy = true, fingerprint = false, password, viewModel, hooks)
             OtpCreateDialog(viewModel, hooks)
         }
         is OtpState.Unlocked -> OtpScreen(state, viewModel.screenState, viewModel, clipboard, hooks, touchInput)
@@ -109,6 +111,7 @@ private fun OtpUnlockScreen(
     config: AppConfig,
     error: String?,
     busy: Boolean,
+    fingerprint: Boolean,
     password: TextFieldState,
     viewModel: OtpViewModel,
     hooks: WindowHooks,
@@ -171,6 +174,14 @@ private fun OtpUnlockScreen(
                 }
                 if (busy) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                if (fingerprint) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { viewModel.unlockWithFingerprint() }, enabled = !busy) { Text("Use fingerprint") }
+                        TextButton(onClick = { viewModel.forgetFingerprint() }, enabled = !busy) {
+                            Text("Forget fingerprint")
+                        }
+                    }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                     TextButton(onClick = { viewModel.close() }, enabled = !busy) { Text("Back to passwords") }
@@ -301,6 +312,7 @@ private fun OtpScreen(
             return
         }
         when {
+            ui.scanning -> ui.scanning = false
             ui.page == OtpPage.List -> ui.query = TextFieldValue("")
             ui.isModified -> ui.dialog = OtpDialog.ConfirmDiscard { ui.backToList() }
             else -> ui.backToList()
@@ -429,6 +441,13 @@ private fun OtpScreen(
                 if (state.localReason != null) {
                     OfflineBanner()
                 }
+                if (state.offerFingerprint) {
+                    FingerprintOffer(
+                        enabled = !busy,
+                        onEnable = { viewModel.enableFingerprint() },
+                        onDismiss = { viewModel.dismissFingerprintOffer() },
+                    )
+                }
                 SearchField(
                     value = ui.query,
                     onValueChange = { ui.query = it },
@@ -483,6 +502,21 @@ private fun OtpScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+            is OtpPage.Edit if ui.scanning -> {
+                CompactBar(title = "Scan QR code", onBack = ::back)
+                HorizontalDivider()
+                QrScanner(
+                    onResult = {
+                        ui.scanning = false
+                        ui.fillInFromUri(it)
+                    },
+                    onError = {
+                        ui.scanning = false
+                        ui.uriError = it
+                    },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             }
             is OtpPage.Edit -> {
                 CompactBar(
@@ -556,6 +590,23 @@ private fun OtpScreen(
             onConfirm = dialog.onConfirm,
             onDismiss = { ui.dialog = null },
         )
+    }
+}
+
+@Composable
+private fun FingerprintOffer(enabled: Boolean, onEnable: () -> Unit, onDismiss: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Open the 2FA codes with your fingerprint next time?",
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDismiss, enabled = enabled) { Text("Not now") }
+        TextButton(onClick = onEnable, enabled = enabled) { Text("Enable") }
     }
 }
 
@@ -722,22 +773,35 @@ private fun AccountDetail(
 private fun AccountEditor(ui: OtpScreenState, id: String?, clock: () -> Long, enabled: Boolean, modifier: Modifier) {
     val draft = ui.draft
     val parsed = remember(draft, id) { draft.toAccount(id) }
-    var uriError by remember { mutableStateOf<String?>(null) }
+    val canScan = qrScannerAvailable()
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            "Paste the otpauth:// link of the QR code to fill in the fields, or enter them by hand.",
+            if (canScan) {
+                "Scan the QR code or paste its otpauth:// link to fill in the fields, or enter them by hand."
+            } else {
+                "Paste the otpauth:// link of the QR code to fill in the fields, or enter them by hand."
+            },
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (canScan) {
+            Button(
+                onClick = {
+                    ui.uriError = null
+                    ui.scanning = true
+                },
+                enabled = enabled,
+            ) { Text("Scan QR code") }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecretInput {
                 OutlinedTextField(
                     value = ui.uri,
                     onValueChange = {
                         ui.uri = it
-                        uriError = null
+                        ui.uriError = null
                     },
                     label = { Text("otpauth:// link") },
                     singleLine = true,
@@ -746,19 +810,11 @@ private fun AccountEditor(ui: OtpScreenState, id: String?, clock: () -> Long, en
                 )
             }
             OutlinedButton(
-                onClick = {
-                    OtpDraft.fromUri(ui.uri, draft.backupCodes).fold(
-                        onSuccess = {
-                            ui.draft = it
-                            ui.uri = ""
-                        },
-                        onFailure = { uriError = it.message },
-                    )
-                },
+                onClick = { ui.fillInFromUri(ui.uri) },
                 enabled = enabled && ui.uri.isNotBlank(),
             ) { Text("Fill in") }
         }
-        uriError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        ui.uriError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         OutlinedTextField(
             value = draft.issuer,
             onValueChange = { ui.draft = draft.copy(issuer = it) },

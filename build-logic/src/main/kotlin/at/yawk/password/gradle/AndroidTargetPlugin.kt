@@ -45,6 +45,10 @@ class AndroidTargetPlugin : Plugin<Project> {
         project.dependencies.apply {
             add("androidMainImplementation", library("androidx-activity-compose"))
             add("androidMainImplementation", library("kotlinx-coroutines-android"))
+            add("androidMainImplementation", library("androidx-camera-camera2"))
+            add("androidMainImplementation", library("androidx-camera-lifecycle"))
+            add("androidMainImplementation", library("androidx-camera-view"))
+            add("androidMainImplementation", library("zxing-core"))
             add("androidHostTestImplementation", "org.jetbrains.kotlin:kotlin-test-junit")
         }
     }

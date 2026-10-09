@@ -149,7 +149,9 @@ private fun UnlockScreen(
     /** Open the 2FA vault on the server of the given configuration */
     onOpenOtp: (AppConfig) -> Unit,
 ) {
-    var url by remember(config.url) { mutableStateOf(config.url) }
+    // Typed into local state, as text fields need, and copied to the view model, so that it survives a trip to the 2FA
+    // codes (the screen starts with the view model's copy)
+    var url by remember { mutableStateOf(config.url) }
     val focus = remember { FocusRequester() }
     fun unlock() {
         if (!busy && password.text.isNotEmpty()) {
@@ -186,7 +188,10 @@ private fun UnlockScreen(
                 Text("Unlock password database", style = MaterialTheme.typography.headlineSmall)
                 OutlinedTextField(
                     value = url,
-                    onValueChange = { url = it },
+                    onValueChange = {
+                        url = it
+                        viewModel.editUrl(it)
+                    },
                     label = { Text("Server") },
                     singleLine = true,
                     enabled = !busy,
@@ -227,7 +232,7 @@ private fun UnlockScreen(
                     TextButton(
                         onClick = {
                             password.clearSecret()
-                            onOpenOtp(config.copy(url = url.trim().ifEmpty { config.url }))
+                            onOpenOtp(config.copy(url = viewModel.effectiveUrl(url)))
                         },
                         enabled = !busy,
                     ) { Text("2FA codes") }
