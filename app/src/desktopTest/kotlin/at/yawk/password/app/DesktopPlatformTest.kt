@@ -85,4 +85,18 @@ class DesktopPlatformTest {
         storage.save(byteArrayOf(1, 2, 3))
         assertTrue(storageDir.resolve("latest").exists())
     }
+
+    @Test
+    fun otpStorageIsASubdirectory() {
+        val platform = DesktopPlatform({ null }, home = "$dir/home")
+        val storageDir = dir.resolve("data/password")
+        val config = AppConfig("x", storageDir.toString())
+        val otp = platform.openOtpStorage(config)
+        val otpDir = storageDir.resolve("totp")
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(otpDir)))
+        otp.save(byteArrayOf(1))
+        assertTrue(otpDir.resolve("latest").exists())
+        // the password database's local copy is separate
+        assertNull(platform.openStorage(config).load())
+    }
 }

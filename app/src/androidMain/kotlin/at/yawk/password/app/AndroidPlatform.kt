@@ -33,8 +33,14 @@ class AndroidPlatform(
         }
     }
 
-    override fun openStorage(config: AppConfig): LocalStorageProvider {
-        val directory = File(config.storageDirectory)
+    override fun openStorage(config: AppConfig): LocalStorageProvider = openDirectory(File(config.storageDirectory))
+
+    /**
+     * `filesDir/totp`, also private to the app.
+     */
+    override fun openOtpStorage(config: AppConfig): LocalStorageProvider = openDirectory(File(filesDir, "totp"))
+
+    private fun openDirectory(directory: File): LocalStorageProvider {
         if (!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("Could not create $directory")
         }

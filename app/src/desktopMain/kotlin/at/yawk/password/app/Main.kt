@@ -29,20 +29,22 @@ fun main() {
         val hooks = remember { WindowHooks() }
         val exit = {
             clipboard.clearIfOurs()
-            // wipes the master password
+            // wipes the master password and the backup password
             viewModels.viewModelStore.clear()
             exitApplication()
         }
         CompositionLocalProvider(LocalViewModelStoreOwner provides viewModels) {
             val viewModel = viewModel { PasswordViewModel(platform) }
+            val otpViewModel = viewModel { OtpViewModel(platform) }
             val state by viewModel.state.collectAsState()
+            val otpState by otpViewModel.state.collectAsState()
             Window(
                 onCloseRequest = { hooks.requestClose(exit) },
-                title = titleFor(state),
+                title = titleFor(state, otpState),
                 state = rememberWindowState(size = DpSize(900.dp, 560.dp)),
                 onPreviewKeyEvent = hooks::onPreviewKeyEvent,
             ) {
-                App(viewModel, clipboard, hooks, onExit = exit)
+                App(viewModel, otpViewModel, clipboard, hooks, onExit = exit)
             }
         }
     }

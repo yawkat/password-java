@@ -2,7 +2,10 @@ package at.yawk.password.app
 
 import at.yawk.password.LocalStorageProvider
 import at.yawk.password.MultiFileLocalStorageProvider
+import java.awt.FileDialog
+import java.awt.Frame
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -61,8 +64,15 @@ class DesktopPlatform(
         }
     }
 
-    override fun openStorage(config: AppConfig): LocalStorageProvider {
-        val directory = File(config.storageDirectory)
+    override fun openStorage(config: AppConfig): LocalStorageProvider = openDirectory(File(config.storageDirectory))
+
+    /**
+     * The `totp` subdirectory of the local copy's directory.
+     */
+    override fun openOtpStorage(config: AppConfig): LocalStorageProvider =
+        openDirectory(File(config.storageDirectory, "totp"))
+
+    private fun openDirectory(directory: File): LocalStorageProvider {
         if (!directory.isDirectory) {
             Files.createDirectories(
                 directory.toPath(),
@@ -72,6 +82,18 @@ class DesktopPlatform(
         return MultiFileLocalStorageProvider(directory)
     }
 
+    override val canPickTextFile get() = true
+
+    override fun pickTextFile(): String? {
+        val dialog = FileDialog(null as Frame?, "Import 2FA accounts", FileDialog.LOAD)
+        dialog.isVisible = true
+        val file = dialog.files.firstOrNull() ?: return null
+        if (file.length() > MAX_IMPORT_SIZE) {
+            throw IOException("The file is larger than ${MAX_IMPORT_SIZE / 1024} KiB")
+        }
+        return file.readText()
+    }
+
     private fun xdgDirectory(variable: String, fallback: String): Path {
         val value = env(variable)
         return if (!value.isNullOrEmpty()) Path.of(value) else Path.of(home, fallback)
@@ -79,5 +101,6 @@ class DesktopPlatform(
 
     companion object {
         const val DEFAULT_URL = "https://pw.yawk.at"
+        private const val MAX_IMPORT_SIZE = 1024 * 1024
     }
 }

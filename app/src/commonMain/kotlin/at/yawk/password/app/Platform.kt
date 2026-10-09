@@ -30,6 +30,24 @@ interface Platform {
      * Open the local copy of the database, creating its location if necessary.
      */
     fun openStorage(config: AppConfig): LocalStorageProvider
+
+    /**
+     * Open the local copy of the 2FA vault, creating its location if necessary.
+     */
+    fun openOtpStorage(config: AppConfig): LocalStorageProvider
+
+    /**
+     * Whether [pickTextFile] can be used.
+     */
+    val canPickTextFile: Boolean get() = false
+
+    /**
+     * Let the user choose a text file, for an import.
+     *
+     * @return The content of the file, or `null` if the user chose none
+     * @throws Exception if the file can't be read
+     */
+    fun pickTextFile(): String? = null
 }
 
 /**

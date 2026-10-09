@@ -13,6 +13,9 @@ import java.util.concurrent.atomic.AtomicReference
 class FakeServer : AutoCloseable {
     val db = AtomicReference<ByteArray?>()
     val registration = AtomicReference<ByteArray?>()
+    /** The 2FA vault, below /totp */
+    val totpDb = AtomicReference<ByteArray?>()
+    val totpRegistration = AtomicReference<ByteArray?>()
 
     /** If set, uploads of the database wait for it, like a stuck connection */
     @Volatile
@@ -22,7 +25,11 @@ class FakeServer : AutoCloseable {
     init {
         server.createContext("/") { exchange ->
             exchange.use {
-                val path = exchange.requestURI.path
+                val fullPath = exchange.requestURI.path
+                val totp = fullPath.startsWith(AuthProtocol.TOTP_VAULT_PREFIX + "/")
+                val path = if (totp) fullPath.substring(AuthProtocol.TOTP_VAULT_PREFIX.length) else fullPath
+                val registration = if (totp) totpRegistration else registration
+                val db = if (totp) totpDb else db
                 val body = when {
                     path == "/salt" -> registration.get()?.copyOf(AuthProtocol.SALT_RESPONSE_LENGTH)
                     path == "/register" -> {

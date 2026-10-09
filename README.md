@@ -195,6 +195,46 @@ the local copy of the database in its private storage. It locks after five minut
 copied password from the clipboard after about 30 seconds. Debug builds also allow plain HTTP to `localhost` and
 `127.0.0.1`, e.g. to a test server reached through `adb reverse`; release builds require HTTPS.
 
+## 2FA codes
+
+The apps also keep TOTP codes ("2FA codes", as in Google Authenticator or Authy) and the backup codes of each
+account, in a vault of their own on the same server (see [SPEC.md](SPEC.md#2fa-vault)). It has its own password, the
+*backup password*: the master password doesn't open it, so the password database and the second factors are never
+behind the same password. Choose a strong backup password that differs from the master password, and keep it written
+down somewhere safe. It is what opens your 2FA codes when your phone is lost.
+
+Open the vault with *2FA codes* on the unlock screen. The first time, the app offers to create it. Then:
+
+- Click or tap an account to copy its current code. Codes are cleared from the clipboard after 30 seconds, like
+  passwords. Shortly before a code expires, the next one is shown as well.
+- *Add* takes the `otpauth://` link of a QR code (most sites show the link or the secret key next to the code), or the
+  fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
+  for the sites that use Authy's own tokens, such as Cloudflare. HOTP (counter-based) and Steam codes are not supported.
+- Each account has a free text field for its backup codes. Keep them here rather than in the password database.
+- The vault locks after five minutes without activity, and on Android as soon as the app goes to the background.
+
+The local copy of the vault is kept in `storageDir/totp` (desktop) or in the app's private storage (Android).
+
+### Migrating from Authy
+
+Authy has no export. Its desktop app, which the old export tricks relied on, was discontinued. The ways that still
+work, as of 2026:
+
+1. **iOS and mitmproxy:** intercept the Authy app's sync and decrypt the tokens with your Authy backup password. Ente's
+   [migration guide](https://ente.com/help/auth/migration/authy/) describes it. The result is a list of `otpauth://`
+   links.
+2. **A rooted Android phone:** read the tokens from the Authy app's data.
+3. **Enroll again:** turn 2FA off and on again at each site and add the new QR code. This always works, and also
+   replaces secrets that Twilio has had. Consider it at least for important accounts, and for Authy's own tokens
+   (Cloudflare and others) wherever the site now offers standard TOTP.
+
+Then use *Import* in the 2FA vault: paste the links (one per line) or, on the desktop, open the file. The preview shows
+the current code of every account: compare them with Authy before you import, and before you delete anything there.
+Lines that can't be read are listed with the reason; accounts that are in the vault already are skipped.
+
+Move the backup codes from the password database into the matching accounts, and then generate new backup codes at
+each site: the server never deletes old versions of the password database, so the old codes stay in them.
+
 ## Building with nix
 
 The flake supports `x86_64-linux` and `aarch64-linux`.

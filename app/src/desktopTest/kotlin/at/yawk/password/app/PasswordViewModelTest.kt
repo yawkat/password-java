@@ -419,25 +419,6 @@ class PasswordViewModelTest {
             assertTrue(runBlocking { vm.delete(entry!!).await() })
         }
     }
-
-    private class FakePlatform(var config: AppConfig, var storage: LocalStorageProvider) : Platform {
-        var configError: Exception? = null
-        var saveError: Exception? = null
-        val savedUrls = mutableListOf<String>()
-
-        override fun loadConfig(): AppConfig {
-            configError?.let { throw it }
-            return config
-        }
-
-        override fun saveUrl(url: String) {
-            saveError?.let { throw it }
-            savedUrls += url
-            config = config.copy(url = url)
-        }
-
-        override fun openStorage(config: AppConfig) = storage
-    }
 }
 
 class SecretsTest {

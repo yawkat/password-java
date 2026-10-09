@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -81,8 +82,10 @@ class WindowHooks {
 /**
  * Window title for the given state.
  */
-fun titleFor(state: UiState) = when (state) {
-    is UiState.Unlocked -> "Passwords"
+fun titleFor(state: UiState, otpState: OtpState = OtpState.Closed) = when {
+    otpState is OtpState.Unlocked -> "2FA codes"
+    otpState != OtpState.Closed -> "Unlock 2FA codes"
+    state is UiState.Unlocked -> "Passwords"
     else -> "Unlock password database"
 }
 
@@ -93,12 +96,14 @@ fun titleFor(state: UiState) = when (state) {
 @Composable
 fun App(
     viewModel: PasswordViewModel,
+    otpViewModel: OtpViewModel,
     clipboard: SecretClipboard,
     hooks: WindowHooks,
     onExit: () -> Unit,
     touchInput: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
+    val otpState by otpViewModel.state.collectAsState()
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         Surface(Modifier.fillMaxSize()) {
             // Not rememberSaveable, so the password never ends up in saved instance state. The field is cleared (with
@@ -106,13 +111,19 @@ fun App(
             val password = remember(state is UiState.Unlocked) { TextFieldState() }
             // keep clear of the system bars, cutouts and the soft keyboard (Android; no insets on desktop)
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                // the 2FA vault is opened from the unlock screen, and replaces it until it is closed
+                if (otpState != OtpState.Closed) {
+                    OtpApp(otpState, otpViewModel, clipboard, hooks, touchInput)
+                    return@Box
+                }
+                val openOtp = { config: AppConfig -> otpViewModel.open(config) }
                 when (val s = state) {
                     is UiState.Locked ->
-                        UnlockScreen(s.config, s.error, busy = false, password, viewModel, hooks, touchInput, onExit)
+                        UnlockScreen(s.config, s.error, busy = false, password, viewModel, hooks, touchInput, onExit, openOtp)
                     is UiState.Unlocking ->
-                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
+                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp)
                     is UiState.ConfirmCreate -> {
-                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit)
+                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp)
                         CreateDatabaseDialog(s.config, viewModel, hooks)
                     }
                     is UiState.Unlocked -> {
@@ -135,6 +146,8 @@ private fun UnlockScreen(
     hooks: WindowHooks,
     touchInput: Boolean,
     onExit: () -> Unit,
+    /** Open the 2FA vault on the server of the given configuration */
+    onOpenOtp: (AppConfig) -> Unit,
 ) {
     var url by remember(config.url) { mutableStateOf(config.url) }
     val focus = remember { FocusRequester() }
@@ -210,6 +223,15 @@ private fun UnlockScreen(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    // the 2FA vault has its own password: open it without the master password
+                    TextButton(
+                        onClick = {
+                            password.clearSecret()
+                            onOpenOtp(config.copy(url = url.trim().ifEmpty { config.url }))
+                        },
+                        enabled = !busy,
+                    ) { Text("2FA codes") }
+                    Spacer(Modifier.weight(1f))
                     // Android apps are left with the back or home button
                     if (!touchInput) {
                         TextButton(onClick = onExit) { Text("Close") }
