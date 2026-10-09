@@ -99,7 +99,10 @@ public class AuthProtocol {
         return out;
     }
 
-    private static int hexDigit(char c) {
+    /**
+     * @return The value of an ASCII hex digit, or -1 if it is none
+     */
+    public static int hexDigit(char c) {
         // Character.digit would also accept non-ASCII digits
         return c < 128 ? Character.digit(c, 16) : -1;
     }
