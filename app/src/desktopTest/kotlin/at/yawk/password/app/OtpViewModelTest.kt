@@ -73,7 +73,19 @@ class OtpViewModelTest {
     private fun OtpViewModel.awaitIdle(): OtpState.Unlocked =
         await { it is OtpState.Unlocked && !it.busy } as OtpState.Unlocked
 
-    private fun account(issuer: String) = OtpAccount().apply {
+    /**
+     * Locking wipes the password once a running operation is done, which may be a moment after the state changed:
+     * the unlock that is just finishing holds the lock while it publishes the unlocked state.
+     */
+    private fun assertWipedSoon(password: ByteArray, message: String) {
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (!password.all { it == 0.toByte() } && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue(password.all { it == 0.toByte() }, message)
+    }
+
+        private fun account(issuer: String) = OtpAccount().apply {
         this.issuer = issuer
         secret = "JBSWY3DPEHPK3PXP"
         backupCodes = "code-$issuer"
@@ -127,7 +139,7 @@ class OtpViewModelTest {
         val sessionPassword = passwords.last()
         vm.lock()
         vm.await<OtpState.Locked>()
-        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped on lock")
+        assertWipedSoon(sessionPassword, "password wiped on lock")
 
         // another device
         platform.otpStorage = MemoryStorageProvider()
@@ -141,7 +153,7 @@ class OtpViewModelTest {
 
         other.close()
         assertEquals(OtpState.Closed, other.state.value)
-        assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped on close")
+        assertWipedSoon(passwords.last(), "password wiped on close")
     }
 
     @Test
@@ -183,7 +195,7 @@ class OtpViewModelTest {
         }
         assertTrue(vm.state.value is OtpState.Unlocked)
         vm.await<OtpState.Locked>()
-        assertTrue(passwords.last().all { it == 0.toByte() }, "password wiped on idle lock")
+        assertWipedSoon(passwords.last(), "password wiped on idle lock")
     }
 
     @Test
