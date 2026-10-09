@@ -73,6 +73,17 @@ public class OtpAccountTest {
     }
 
     @Test
+    public void duplicateIdsAreReplaced() throws Exception {
+        OtpBlob blob = new ObjectMapper().readValue(
+                "{\"accounts\":[{\"id\":\"x\",\"issuer\":\"a\"},{\"id\":\"x\",\"issuer\":\"b\"}," +
+                "{\"id\":\"y\",\"issuer\":\"c\"}]}", OtpBlob.class);
+        Assert.assertEquals(blob.getAccounts().get(0).getId(), "x");
+        Assert.assertNotEquals(blob.getAccounts().get(1).getId(), "x");
+        Assert.assertEquals(blob.getAccounts().get(1).getIssuer(), "b");
+        Assert.assertEquals(blob.getAccounts().get(2).getId(), "y");
+    }
+
+    @Test
     public void distinctIds() {
         Assert.assertNotEquals(new OtpAccount().getId(), new OtpAccount().getId());
     }

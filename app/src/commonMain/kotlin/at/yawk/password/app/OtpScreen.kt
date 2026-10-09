@@ -346,8 +346,12 @@ private fun OtpScreen(
 
     fun lock() {
         if (latest.busy) return
-        clipboard.clearIfOurs()
-        viewModel.lock()
+        val doLock = {
+            clipboard.clearIfOurs()
+            viewModel.lock()
+        }
+        // like Back and closing the window: locking drops a draft or a pasted import
+        if (ui.isModified) ui.dialog = OtpDialog.ConfirmDiscard(doLock) else doLock()
     }
 
     // ---- window integration ----
@@ -449,8 +453,8 @@ private fun OtpScreen(
                     )
                 }
                 LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                    // no keys: the ids of a vault written by other software may repeat, which keys don't allow
-                    items(visible) { account ->
+                    // ids are unique, see OtpBlob.setAccounts
+                    items(visible, key = { it.id }) { account ->
                         AccountRow(account, clock, onCopy = { copy(account) }, onOpen = { ui.openDetail(account) })
                         HorizontalDivider()
                     }
