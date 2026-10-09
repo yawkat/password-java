@@ -99,6 +99,10 @@ otherwise it is cleared when you return to the page, even if you have copied som
 page before, the password stays in the clipboard. Behind a reverse proxy that serves the server below a path, open that path with a trailing slash
 (`https://example.com/pw/`), since the page loads everything relative to its URL.
 
+With *2FA codes* selected, the page opens the [2FA vault](#2fa-codes) with the backup password instead: it shows the
+current code of every account (computed in the browser), copies it like a password, and shows the backup codes on
+request. This is for the case the 2FA codes are kept for: the phone is lost.
+
 The page runs the same protocol as the apps in the browser: Argon2id through WebAssembly
 ([hash-wasm](https://github.com/Daninet/hash-wasm), taken from its webjar at build time), and WebCrypto for the rest.
 The key derivation takes a few seconds, longer on a slow phone. It needs HTTPS and a browser with Ed25519 in WebCrypto
@@ -107,7 +111,8 @@ The key derivation takes a few seconds, longer on a slow phone. It needs HTTPS a
 The master password still never goes to the server, but the server now supplies the code that handles it: whoever
 controls the server or the TLS proxy can serve a page that sends the password elsewhere. With the apps, that takes
 compromising the device. And every device you type the master password into can read the whole database, so use a
-device you trust, in a private window.
+device you trust, in a private window. The same holds for the backup password and the 2FA codes. Don't open both
+vaults on a device you don't trust: that would put both factors in one place.
 
 To reset a server, stop it and delete `verifier` and `latest` from the data directory. The next client that saves
 registers it again, with a new install salt. A client with the same password and a local copy uploads the content of

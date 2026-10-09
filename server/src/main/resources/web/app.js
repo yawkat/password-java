@@ -16,6 +16,21 @@
     // PKCS#8 encoding of an Ed25519 private key, followed by the 32-byte seed. WebCrypto can't import a raw seed.
     const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 
+    // The two vaults of SPEC.md: their paths (relative to the page) and the path that the signature covers
+    const VAULTS = {
+        passwords: {
+            prefix: "", signedPath: "/db", passwordLabel: "Master password",
+            empty: "The server has no password database yet",
+        },
+        totp: {
+            prefix: "totp/", signedPath: "/totp/db", passwordLabel: "Backup password",
+            empty: "The server has no 2FA codes yet",
+        },
+    };
+    // HMAC of a TOTP account (model/OtpAlgorithm.java)
+    const HMAC_HASHES = {SHA1: "SHA-1", SHA256: "SHA-256", SHA512: "SHA-512"};
+    const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
     const LOCK_AFTER_MILLIS = 5 * 60 * 1000;
     const CLEAR_CLIPBOARD_AFTER_MILLIS = 30 * 1000;
     const TIMEOUT_MILLIS = 60 * 1000;
@@ -105,10 +120,10 @@
         return fetch(url, {...init, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MILLIS)});
     }
 
-    async function fetchSalt() {
-        const response = await request("salt");
+    async function fetchSalt(vault) {
+        const response = await request(vault.prefix + "salt");
         if (response.status === 404) {
-            throw new Error("This server is not registered yet: there is no database to open");
+            throw new Error("This vault is not registered yet: there is nothing to open");
         }
         if (!response.ok) {
             throw httpError("Could not fetch the salt", response);
@@ -123,12 +138,13 @@
         return body.slice(1);
     }
 
-    async function fetchDatabase(keys) {
+    // returns the blob and the offset of the server's clock, which the TOTP codes need as well
+    async function fetchDatabase(keys, vault) {
         const empty = new Uint8Array(0);
         let clockOffset = 0;
         for (let attempt = 0; ; attempt++) {
-            const header = await authHeader(keys, Date.now() + clockOffset, "GET", "/db", empty);
-            const response = await request("db", {headers: {"X-Auth": header}});
+            const header = await authHeader(keys, Date.now() + clockOffset, "GET", vault.signedPath, empty);
+            const response = await request(vault.prefix + "db", {headers: {"X-Auth": header}});
             const serverDate = Date.parse(response.headers.get("Date") ?? "");
             if (response.status === 401 && attempt === 0 && !Number.isNaN(serverDate)) {
                 // our clock is off, retry once with the server's
@@ -139,12 +155,12 @@
                 throw new Error("The server rejected the request time, is this device's clock wrong?");
             }
             if (response.status === 404) {
-                throw new Error("The server has no database yet");
+                throw new Error(vault.empty);
             }
             if (!response.ok) {
                 throw httpError("Could not fetch the database", response);
             }
-            return new Uint8Array(await response.arrayBuffer());
+            return {blob: new Uint8Array(await response.arrayBuffer()), clockOffset};
         }
     }
 
@@ -186,29 +202,120 @@
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Error("Invalid database: bad length");
             }
-            const json = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length)));
-            // like the apps, accept missing fields and scalars other than strings
-            return (json.data?.passwords ?? []).map(entry => ({
-                name: String(entry?.name ?? ""),
-                value: String(entry?.value ?? ""),
-            }));
+            return JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length))).data;
         } finally {
             plaintext.fill(0);
         }
     }
 
-    async function unlock(password, onProgress) {
+    // like the apps, accept missing fields and scalars other than strings
+    function passwordEntries(data) {
+        return (data?.passwords ?? []).map(entry => ({
+            name: String(entry?.name ?? ""),
+            value: String(entry?.value ?? ""),
+        }));
+    }
+
+    // Base32 of RFC 4648, exactly as lenient as Base32.java: ASCII case, spaces and dashes are ignored, and padding at
+    // the end. Anything else is invalid, so that the apps and this page agree about every secret.
+    function base32Decode(text) {
+        let clean = "";
+        let padding = false;
+        for (const c of text) {
+            if (c === " " || c === "-") {
+                continue;
+            }
+            if (c === "=") {
+                padding = true;
+                continue;
+            }
+            const upper = c >= "a" && c <= "z" ? c.toUpperCase() : c;
+            if (padding || !BASE32_ALPHABET.includes(upper)) {
+                return null;
+            }
+            clean += upper;
+        }
+        const out = [];
+        let buffer = 0;
+        let bits = 0;
+        for (const c of clean) {
+            const value = BASE32_ALPHABET.indexOf(c);
+            buffer = (buffer << 5 | value) & 0xffff;
+            bits += 5;
+            if (bits >= 8) {
+                bits -= 8;
+                out.push(buffer >> bits & 0xff);
+            }
+        }
+        return [1, 3, 6].includes(clean.length % 8) ? null : new Uint8Array(out);
+    }
+
+    // A field of an account as OtpAccount.java reads it: missing gives the default, an explicit null stays null (so
+    // that an account the apps call invalid is invalid here as well)
+    function field(account, name, defaultValue) {
+        return Object.hasOwn(account, name) ? account[name] : defaultValue;
+    }
+
+    // The accounts of the 2FA vault, each with its secret imported as a (non-extractable) HMAC key, or without a key
+    // if it can't generate codes (Totp.check). One bad account never hides the others.
+    async function otpAccounts(data) {
+        const accounts = (data?.accounts ?? []).filter(account => account !== null && typeof account === "object");
+        return Promise.all(accounts.map(async account => {
+            const result = {
+                issuer: String(account.issuer ?? ""),
+                label: String(account.label ?? ""),
+                digits: Number(field(account, "digits", 6)),
+                period: Number(field(account, "period", 30)),
+                backupCodes: String(account.backupCodes ?? ""),
+                key: null,
+            };
+            const algorithm = field(account, "algorithm", "SHA1");
+            const hash = typeof algorithm === "string" && Object.hasOwn(HMAC_HASHES, algorithm) ?
+                HMAC_HASHES[algorithm] : null;
+            const secret = typeof account.secret === "string" ? base32Decode(account.secret) : null;
+            try {
+                if (field(account, "type", "totp") === "totp" && hash && secret && secret.length > 0 &&
+                    Number.isInteger(result.digits) && result.digits >= 6 && result.digits <= 10 &&
+                    Number.isInteger(result.period) && result.period > 0) {
+                    result.key = await crypto.subtle.importKey("raw", secret, {name: "HMAC", hash}, false, ["sign"]);
+                }
+            } catch (e) {
+                // shown as "invalid"
+            } finally {
+                secret?.fill(0);
+            }
+            return result;
+        }));
+    }
+
+    // RFC 6238, like Totp.java: HOTP of the number of periods since the epoch
+    async function totp(account, unixMillis) {
+        const counter = Math.floor(unixMillis / 1000 / account.period);
+        const message = new Uint8Array(8);
+        new DataView(message.buffer).setBigUint64(0, BigInt(counter));
+        const hash = new Uint8Array(await crypto.subtle.sign("HMAC", account.key, message));
+        const offset = hash[hash.length - 1] & 0xf;
+        const binary = ((hash[offset] & 0x7f) << 24 | hash[offset + 1] << 16 | hash[offset + 2] << 8 |
+            hash[offset + 3]) >>> 0;
+        return String(binary % 10 ** account.digits).padStart(account.digits, "0");
+    }
+
+    async function unlock(password, vault, onProgress) {
         onProgress("Fetching salt…");
-        const installSalt = await fetchSalt();
+        const installSalt = await fetchSalt(vault);
         onProgress("Deriving keys, this can take a while on a slow device…");
         // let the message render: the key derivation blocks this thread
         await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
         const keys = await deriveKeys(password, installSalt);
         try {
             onProgress("Fetching database…");
-            const blob = await fetchDatabase(keys);
+            const {blob, clockOffset} = await fetchDatabase(keys, vault);
             onProgress("Decrypting…");
-            return await decrypt(keys, blob);
+            const data = await decrypt(keys, blob);
+            return {
+                loaded: vault === VAULTS.totp ? await otpAccounts(data) : passwordEntries(data),
+                clockOffset,
+            };
         } finally {
             wipeKeys(keys);
         }
@@ -218,7 +325,12 @@
 
     const $ = id => document.getElementById(id);
 
+    // the unlocked entries or 2FA accounts, null while locked
     let entries = null;
+    let codeTimer = null;
+    // the server's clock minus ours: the codes follow the server's clock, like the signed requests
+    let clockOffset = 0;
+    let updatingCodes = false;
     // incremented by lock(), so that an unlock that was running meanwhile doesn't show its result
     let generation = 0;
     let lastActivity = 0;
@@ -300,6 +412,108 @@
         return item;
     }
 
+    function selectedVault() {
+        return VAULTS[document.querySelector("input[name=vault]:checked")?.value] ?? VAULTS.passwords;
+    }
+
+    function formatCode(code) {
+        const split = Math.floor(code.length / 2);
+        return code.substring(0, split) + " " + code.substring(split);
+    }
+
+    // A 2FA account: its name and current code, which updateCodes keeps current, and its backup codes behind "Show"
+    function renderAccount(account) {
+        const item = document.createElement("li");
+        const title = account.issuer || account.label || "(unnamed)";
+        item.dataset.name = (account.issuer + " " + account.label).toLowerCase();
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.className = "otp-summary";
+        summary.textContent = account.issuer && account.label ? `${title} · ${account.label}` : title;
+        details.append(summary);
+
+        const codeRow = document.createElement("div");
+        codeRow.className = "password-row";
+        const codeText = document.createElement("code");
+        codeText.className = "password otp-code";
+        const countdown = document.createElement("span");
+        countdown.className = "countdown";
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.textContent = "Copy";
+        copyButton.disabled = account.key === null;
+        // the current code at the time of the click, not the one shown
+        copyButton.addEventListener("click", async () => copy(await totp(account, Date.now() + clockOffset)));
+        codeRow.append(codeText, countdown, copyButton);
+        // shown in the summary as well, so that a code can be read without opening the account
+        const summaryCode = document.createElement("code");
+        summaryCode.className = "summary-code";
+        summary.append(summaryCode);
+        details.append(codeRow);
+        item.otp = {account, codeText, countdown, summaryCode, counter: null};
+
+        if (account.backupCodes) {
+            const backupRow = document.createElement("div");
+            backupRow.className = "password-row";
+            const label = document.createElement("span");
+            label.className = "password";
+            label.textContent = "Backup codes";
+            const pre = document.createElement("pre");
+            pre.hidden = true;
+            pre.textContent = account.backupCodes;
+            const show = document.createElement("button");
+            show.type = "button";
+            show.textContent = "Show";
+            show.addEventListener("click", () => {
+                pre.hidden = !pre.hidden;
+                show.textContent = pre.hidden ? "Show" : "Hide";
+            });
+            backupRow.append(label, show);
+            details.append(backupRow, pre);
+        }
+        item.append(details);
+        return item;
+    }
+
+    // Show the current code and the time left of every 2FA account, computing a code only when it changes. The codes
+    // are computed together; a tick that comes while the last one still computes is skipped.
+    async function updateCodes() {
+        if (updatingCodes) {
+            return;
+        }
+        updatingCodes = true;
+        try {
+            const started = generation;
+            const now = Date.now() + clockOffset;
+            const changed = [];
+            for (const item of $("entry-list").children) {
+                const otp = item.otp;
+                if (!otp) {
+                    continue;
+                }
+                if (otp.account.key === null) {
+                    otp.codeText.textContent = otp.summaryCode.textContent = "invalid";
+                    continue;
+                }
+                const periodMillis = otp.account.period * 1000;
+                otp.countdown.textContent = `${Math.ceil((periodMillis - now % periodMillis) / 1000)}s`;
+                const counter = Math.floor(now / periodMillis);
+                if (counter !== otp.counter) {
+                    changed.push(totp(otp.account, now).then(code => ({otp, counter, code})));
+                }
+            }
+            for (const {otp, counter, code} of await Promise.all(changed)) {
+                if (generation !== started) {
+                    return;
+                }
+                otp.counter = counter;
+                otp.codeText.textContent = otp.summaryCode.textContent = formatCode(code);
+            }
+        } finally {
+            updatingCodes = false;
+        }
+    }
+
     function filterEntries() {
         const query = $("search").value.trim().toLowerCase();
         for (const item of $("entry-list").children) {
@@ -307,14 +521,21 @@
         }
     }
 
-    function showEntries(loaded) {
+    function showEntries({loaded, clockOffset: offset}, vault) {
         entries = loaded;
+        clockOffset = offset;
         $("password").value = "";
         $("status").textContent = "";
         $("unlock").hidden = true;
         $("entries").hidden = false;
         $("search").value = "";
-        $("entry-list").replaceChildren(...entries.map(renderEntry));
+        if (vault === VAULTS.totp) {
+            $("entry-list").replaceChildren(...entries.map(renderAccount));
+            updateCodes();
+            codeTimer = setInterval(updateCodes, 1000);
+        } else {
+            $("entry-list").replaceChildren(...entries.map(renderEntry));
+        }
         $("search").focus();
         lastActivity = Date.now();
         lockTimer = setTimeout(checkIdle, LOCK_AFTER_MILLIS);
@@ -322,7 +543,10 @@
 
     function lock(reason) {
         generation++;
+        // drops the 2FA keys with the list items
         entries = null;
+        clearInterval(codeTimer);
+        codeTimer = null;
         clearTimeout(lockTimer);
         if (clipboardTimer !== null) {
             clearClipboard();
@@ -334,6 +558,7 @@
         $("status").textContent = reason ?? "";
         $("status").classList.remove("error");
         $("unlock-button").disabled = false;
+        setVaultChoiceEnabled(true);
         $("password").value = "";
         $("password").focus();
     }
@@ -362,16 +587,18 @@
                 return;
             }
             const started = generation;
+            const vault = selectedVault();
             button.disabled = true;
+            setVaultChoiceEnabled(false);
             $("status").classList.remove("error");
             try {
-                const loaded = await unlock($("password").value, text => {
+                const loaded = await unlock($("password").value, vault, text => {
                     if (generation === started) {
                         $("status").textContent = text;
                     }
                 });
                 if (generation === started) {
-                    showEntries(loaded);
+                    showEntries(loaded, vault);
                 }
             } catch (e) {
                 if (generation === started) {
@@ -381,10 +608,16 @@
             } finally {
                 if (generation === started) {
                     button.disabled = false;
+                    setVaultChoiceEnabled(true);
                 }
             }
         }
         $("search").addEventListener("input", filterEntries);
+        for (const radio of document.querySelectorAll("input[name=vault]")) {
+            radio.addEventListener("change", updatePasswordLabel);
+        }
+        // a reload may restore the other choice
+        updatePasswordLabel();
         $("lock-button").addEventListener("click", () => lock());
         for (const type of ["pointerdown", "keydown", "scroll"]) {
             document.addEventListener(type, () => lastActivity = Date.now(), {passive: true});
@@ -406,6 +639,17 @@
         }
         maskPasswordField();
         $("password").focus();
+    }
+
+    function updatePasswordLabel() {
+        $("password-label").textContent = selectedVault().passwordLabel;
+    }
+
+    // not while unlocking: the label must stay that of the vault being opened
+    function setVaultChoiceEnabled(enabled) {
+        for (const radio of document.querySelectorAll("input[name=vault]")) {
+            radio.disabled = !enabled;
+        }
     }
 
     // Browsers ignore autocomplete="off" when offering to save a password, so where it can be masked with CSS, the

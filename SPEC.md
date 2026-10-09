@@ -153,7 +153,8 @@ All responses of the server, the API included, carry a `Content-Security-Policy`
 scripts, styles and requests plus WebAssembly, and `Cache-Control: no-store` (`WebHeadersFilter`).
 
 The page is a read-only client: it loads as in [Client behaviour](#client-behaviour), without a local copy, and never
-registers or saves. It requests `salt` and `db` relative to its own URL, but signs the path `/db`.
+registers or saves. It requests `salt` and `db` relative to its own URL, but signs the path `/db`. For the 2FA vault
+it requests `totp/salt` and `totp/db`, signs `/totp/db`, and computes the codes with WebCrypto's HMAC.
 
 ### Server storage
 

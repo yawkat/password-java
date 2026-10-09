@@ -14,12 +14,16 @@
     <section id="unlock">
         <h1>Emergency access</h1>
         <p class="warning">
-            Read-only access for when no device with the app is at hand. Your master password unlocks everything:
-            only enter it on a device you trust, preferably in a private window, and lock when you are done.
+            Read-only access for when no device with the app is at hand. The password unlocks everything in its
+            vault: only enter it on a device you trust, preferably in a private window, and lock when you are done.
         </p>
+        <div class="vault-choice" role="radiogroup" aria-label="Vault">
+            <label><input type="radio" name="vault" value="passwords" checked> Passwords</label>
+            <label><input type="radio" name="vault" value="totp"> 2FA codes</label>
+        </div>
         <!-- no <form>, so that browsers are less inclined to offer saving the password, see maskPasswordField -->
         <div class="unlock-form">
-            <label for="password">Master password</label>
+            <label id="password-label" for="password">Master password</label>
             <input id="password" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"
                    spellcheck="false">
             <button id="unlock-button" class="primary" type="button">Unlock</button>
