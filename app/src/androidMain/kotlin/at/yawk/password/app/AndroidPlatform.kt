@@ -15,11 +15,14 @@ import java.io.IOException
 class AndroidPlatform(
     private val preferences: SharedPreferences,
     private val filesDir: File,
+    /** Whether the device can keep a fingerprint key, see [strongBiometricsAvailable] */
+    private val canKeepFingerprintKey: () -> Boolean = { false },
 ) : Platform {
     constructor(context: Context) : this(
         // what PreferenceManager.getDefaultSharedPreferences, which the old app used, opens
         context.getSharedPreferences("${context.packageName}_preferences", Context.MODE_PRIVATE),
         context.filesDir,
+        { strongBiometricsAvailable(context) },
     )
 
     override fun loadConfig() = AppConfig(
@@ -43,7 +46,9 @@ class AndroidPlatform(
     /**
      * The key behind the fingerprint, in `filesDir/totp-key` (encrypted by the Android Keystore).
      */
-    override val otpKeyStore: OtpKeyStore by lazy { AndroidOtpKeyStore(File(filesDir, "totp-key")) }
+    override val otpKeyStore: OtpKeyStore by lazy {
+        AndroidOtpKeyStore(File(filesDir, "totp-key"), canStore = canKeepFingerprintKey)
+    }
 
     private fun openDirectory(directory: File): LocalStorageProvider {
         if (!directory.isDirectory && !directory.mkdirs()) {

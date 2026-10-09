@@ -107,7 +107,8 @@ class OtpViewModel(
     }
 
     /** Whether there is a fingerprint key for the server of [config], and a way to check the fingerprint */
-    private fun fingerprintAvailable(config: AppConfig) = authenticator != null && keyStore?.keyUrl() == config.url
+    private fun fingerprintAvailable(config: AppConfig) =
+        authenticator != null && keyStore?.keyInfo()?.url == config.url
 
     private fun locked(config: AppConfig, error: String? = null) =
         OtpState.Locked(config, error, fingerprint = fingerprintAvailable(config))
@@ -143,17 +144,23 @@ class OtpViewModel(
                         _state.value = locked(config, "The 2FA vault is empty. Unlock it with the backup password.")
                         return@withLock
                     }
+                    if (opened.localReason == ClientValue.LocalReason.VAULT_RESET) {
+                        // A reset (e.g. after losing a phone) must lock out the fingerprint keys: only the backup
+                        // password opens the vault again. (Offline, the local copy still opens: the server can't
+                        // be asked.)
+                        keyStore.delete()
+                        _state.value = locked(
+                            config,
+                            "The 2FA vault was reset on the server. Unlock it with the backup password.",
+                        )
+                        return@withLock
+                    }
                     this@OtpViewModel.password = null
                     this@OtpViewModel.client = client
                     saveUrl(config.url)
                     showUnlocked(
                         opened,
-                        if (opened.localReason == ClientValue.LocalReason.VAULT_RESET) {
-                            "The 2FA vault was reset on the server. Changes stay on this device until you unlock " +
-                                "with the backup password."
-                        } else {
-                            localCopyStatus(opened.localReason) ?: "${accountCount(opened.accounts.size)} loaded"
-                        },
+                        localCopyStatus(opened.localReason) ?: "${accountCount(opened.accounts.size)} loaded",
                     )
                 } catch (e: Exception) {
                     log.warn("Unlocking the 2FA vault with the fingerprint failed", e)
@@ -229,33 +236,38 @@ class OtpViewModel(
         }
     }
 
-    /** The user declined the fingerprint unlock in this session */
+    /** The user declined the fingerprint unlock (until the app restarts) */
     private var fingerprintOfferDismissed = false
 
     /**
-     * Whether to offer [enableFingerprint]: opened with the password, on a device that can keep the key, none is kept
-     * yet, and the vault is on the server (a new one only after its first save). Only while no other client call runs.
+     * Whether to offer [enableFingerprint]: opened with the password, on a device that can keep the key, the key kept
+     * (if any) is not that of this vault (on this server), and the vault is on the server (a new one only after its
+     * first save). Only while no other client call runs.
      */
     private fun shouldOfferFingerprint(): Boolean {
         val client = client
         val config = config
         val keyStore = keyStore
-        // a key of another server is replaced
         if (password == null || authenticator == null || keyStore == null || client == null || config == null ||
-            keyStore.keyUrl() == config.url || fingerprintOfferDismissed
+            fingerprintOfferDismissed || !keyStore.canStore()
         ) {
             return false
         }
-        return try {
-            client.exportKey().wipe()
-            true
+        val exported = try {
+            client.exportKey()
         } catch (e: IllegalStateException) {
-            false
+            return false
+        }
+        try {
+            // a key of another server, or of a vault that was created again, is replaced
+            return keyStore.keyInfo() != StoredKeyInfo(config.url, vaultIdOf(exported))
+        } finally {
+            exported.wipe()
         }
     }
 
     /**
-     * Don't offer the fingerprint unlock again in this session.
+     * Don't offer the fingerprint unlock again until the app restarts.
      */
     fun dismissFingerprintOffer() {
         fingerprintOfferDismissed = true
@@ -375,7 +387,6 @@ class OtpViewModel(
         session++
         store = null
         client = null
-        fingerprintOfferDismissed = false
         screenState = OtpScreenState()
         pendingClient = null
         idleLock?.cancel()

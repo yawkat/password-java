@@ -410,6 +410,72 @@ class OtpViewModelTest {
         assertEquals(listOf(server.url), platform.savedUrls)
     }
 
+    /**
+     * Resetting the vault on the server locks out the fingerprint (e.g. of a lost phone): the key is deleted, although
+     * it still opens the local copy.
+     */
+    @Test
+    fun fingerprintAfterReset() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.close()
+
+        server.totpRegistration.set(null)
+        server.totpDb.set(null)
+        vm.open(config)
+        val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
+        assertTrue(locked.error!!.contains("reset"), locked.error)
+        assertNull(keyStore.key, "deleted")
+        assertEquals(false, locked.fingerprint)
+    }
+
+    @Test
+    fun noOfferWithoutBiometrics() {
+        existingVault()
+        val vm = fingerprintViewModel(FakeOtpKeyStore().apply { canStore = false }, FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        assertEquals(false, vm.await<OtpState.Unlocked>().offerFingerprint)
+    }
+
+    /**
+     * "Not now" lasts beyond locking (which on Android happens with every switch to another app).
+     */
+    @Test
+    fun dismissedOfferStaysDismissed() {
+        existingVault()
+        val vm = fingerprintViewModel(FakeOtpKeyStore(), FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        assertTrue(vm.await<OtpState.Unlocked>().offerFingerprint)
+        vm.dismissFingerprintOffer()
+        vm.lock()
+        vm.unlock("backup")
+        assertEquals(false, vm.await<OtpState.Unlocked>().offerFingerprint)
+    }
+
+    /**
+     * A key for this server, but of another vault (created again since), doesn't keep the offer away.
+     */
+    @Test
+    fun offerReplacesKeyOfOldVault() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore().apply { key = ByteArray(64) { 9 }; url = config.url }
+        val authenticator = FakeAuthenticator().apply { cancel = true }
+        val vm = fingerprintViewModel(keyStore, authenticator)
+        vm.open(config)
+        vm.await { it is OtpState.Locked && authenticator.count == 1 }
+        authenticator.cancel = false
+        vm.unlock("backup")
+        assertTrue(vm.await<OtpState.Unlocked>().offerFingerprint)
+    }
+
     @Test
     fun forgetFingerprint() {
         existingVault()

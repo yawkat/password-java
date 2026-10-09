@@ -128,7 +128,7 @@ class PasswordViewModel(
                     this@PasswordViewModel.password = bytes
                     this@PasswordViewModel.config = config
                     // only remember a URL that worked, and don't let a failure to do so fail the unlock
-                    urlSaveError = if (config.url != savedUrl) saveUrl(config.url) else null
+                    urlSaveError = if (config.url != currentlySavedUrl()) saveUrl(config.url) else null
                     if (opened == null) {
                         pendingClient = client
                         _state.value = UiState.ConfirmCreate(config)
@@ -244,6 +244,15 @@ class PasswordViewModel(
             // the mutex is fair, so this runs after the running operation
             viewModelScope.launch { mutex.withLock { password?.wipe() } }
         }
+    }
+
+    /**
+     * The URL in the configuration file now: the 2FA codes may have saved another one since it was loaded.
+     */
+    private suspend fun currentlySavedUrl(): String? = try {
+        withContext(ioDispatcher) { platform.loadConfig().url }.also { savedUrl = it }
+    } catch (e: Exception) {
+        null
     }
 
     /**

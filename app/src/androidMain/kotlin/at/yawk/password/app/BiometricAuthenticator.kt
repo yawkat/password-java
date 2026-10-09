@@ -1,6 +1,8 @@
 package at.yawk.password.app
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
@@ -50,4 +52,20 @@ class BiometricAuthenticator(private val activity: Activity) : Authenticator {
                 },
             )
         }
+}
+
+/**
+ * Whether the device can do the check that [BiometricAuthenticator] asks for: a screen lock, and a strong biometric
+ * (e.g. a fingerprint) enrolled. Without them, no key that needs the check can be made.
+ */
+fun strongBiometricsAvailable(context: Context): Boolean {
+    if (context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure != true) return false
+    val biometrics = context.getSystemService(BiometricManager::class.java) ?: return false
+    val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        biometrics.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+    } else {
+        @Suppress("DEPRECATION")
+        biometrics.canAuthenticate()
+    }
+    return result == BiometricManager.BIOMETRIC_SUCCESS
 }

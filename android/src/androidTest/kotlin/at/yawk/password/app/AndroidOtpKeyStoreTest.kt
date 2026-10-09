@@ -47,22 +47,22 @@ class AndroidOtpKeyStoreTest {
     @Test
     fun roundTrip() = runBlocking {
         val store = store()
-        assertNull(store.keyUrl())
+        assertNull(store.keyInfo()?.url)
         assertTrue(store.store(exported, URL, Passing()))
-        assertEquals(URL, store.keyUrl())
+        assertEquals(URL, store.keyInfo()?.url)
         assertArrayEquals(exported, store.load(Passing()))
         // cancelled: nothing returned, the key is kept
         assertNull(store.load(Passing(cancel = true)))
-        assertEquals(URL, store.keyUrl())
+        assertEquals(URL, store.keyInfo()?.url)
         store.delete()
-        assertNull(store.keyUrl())
+        assertNull(store.keyInfo()?.url)
     }
 
     @Test
     fun cancelledStoreKeepsNothing() = runBlocking {
         val store = store()
         assertFalse(store.store(exported, URL, Passing(cancel = true)))
-        assertNull(store.keyUrl())
+        assertNull(store.keyInfo()?.url)
     }
 
     @Test
@@ -81,6 +81,26 @@ class AndroidOtpKeyStoreTest {
     }
 
     /**
+     * A replacement that is cancelled keeps the old key working.
+     */
+    @Test
+    fun cancelledReplacementKeepsOldKey() = runBlocking {
+        val store = store()
+        store.store(exported, URL, Passing())
+        val other = ByteArray(64) { (it + 1).toByte() }
+        assertFalse(store.store(other, "https://other.example.com", Passing(cancel = true)))
+        assertEquals(URL, store.keyInfo()?.url)
+        assertArrayEquals(exported, store.load(Passing()))
+        // a completed replacement
+        assertTrue(store.store(other, "https://other.example.com", Passing()))
+        assertEquals("https://other.example.com", store.keyInfo()?.url)
+        assertEquals(vaultIdOf(other), store.keyInfo()?.vaultId)
+        assertArrayEquals(other, store.load(Passing()))
+        // and a new instance reads the same
+        assertEquals(store.keyInfo(), store().keyInfo())
+    }
+
+    /**
      * The URL is associated data: pointing the key at another server breaks it.
      */
     @Test
@@ -91,7 +111,7 @@ class AndroidOtpKeyStoreTest {
         // "https://pw.example.com" -> "https://pw.example.org", same length
         val text = String(content, Charsets.ISO_8859_1).replace(URL, "https://pw.example.org")
         file.writeBytes(text.toByteArray(Charsets.ISO_8859_1))
-        assertEquals("https://pw.example.org", store.keyUrl())
+        assertEquals("https://pw.example.org", store().keyInfo()?.url)
         try {
             store.load(Passing())
             fail("changed URL accepted")
@@ -120,6 +140,6 @@ class AndroidOtpKeyStoreTest {
         } catch (e: Exception) {
             // UserNotAuthenticatedException, wrapped by the cipher
         }
-        assertNull(store.keyUrl())
+        assertNull(store.keyInfo()?.url)
     }
 }

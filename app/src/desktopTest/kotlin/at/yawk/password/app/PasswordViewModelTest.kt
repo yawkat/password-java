@@ -421,6 +421,20 @@ class PasswordViewModelTest {
     }
 
     /**
+     * The 2FA codes saved another URL meanwhile: an unlock with the configured one saves it again.
+     */
+    @Test
+    fun urlChangedByOtherViewModel() {
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        platform.config = platform.config.copy(url = "https://elsewhere.example.com")
+        vm.unlock(vm.effectiveUrl(""), "secret")
+        vm.await<UiState.ConfirmCreate>()
+        assertEquals(listOf(server.url), platform.savedUrls)
+        vm.cancelCreate()
+    }
+
+    /**
      * The URL typed on the lock screen is kept in the state (e.g. while the 2FA codes are open), and saved once an
      * unlock with it worked, also after a failed attempt with it.
      */

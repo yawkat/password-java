@@ -104,8 +104,12 @@ private fun CameraPreview(onResult: (String) -> Unit, onError: (String) -> Unit,
         }, context.mainExecutor)
         onDispose {
             done.set(true)
-            providerFuture.addListener({ runCatching { providerFuture.get().unbindAll() } }, context.mainExecutor)
-            analysisExecutor.shutdown()
+            // unbind before stopping the analyzer's executor, which the camera would otherwise still feed
+            val unbind = {
+                runCatching { providerFuture.get().unbindAll() }
+                analysisExecutor.shutdown()
+            }
+            if (providerFuture.isDone) unbind() else providerFuture.addListener(unbind, context.mainExecutor)
         }
     }
     AndroidView(factory = { previewView }, modifier = modifier)

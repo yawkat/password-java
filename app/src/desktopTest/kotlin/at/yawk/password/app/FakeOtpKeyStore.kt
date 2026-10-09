@@ -11,9 +11,14 @@ class FakeOtpKeyStore : OtpKeyStore {
     /** Makes [load] fail like a key that the Keystore invalidated */
     var invalidated = false
 
-    override fun keyUrl() = if (key == null) null else url
+    var canStore = true
+
+    override fun canStore() = canStore
+
+    override fun keyInfo() = key?.let { StoredKeyInfo(url ?: "", vaultIdOf(it)) }
 
     override suspend fun store(exported: ByteArray, url: String, authenticator: Authenticator): Boolean {
+        // like the real one: the old key stays if the check is cancelled
         authenticator.authenticate(Cipher.getInstance("AES/GCM/NoPadding"), "store") ?: return false
         key = exported.copyOf()
         this.url = url
