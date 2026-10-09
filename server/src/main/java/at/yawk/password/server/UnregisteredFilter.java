@@ -13,25 +13,25 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Rejects requests to routes annotated with {@link Required} with 403 once the server is registered, before their
+ * Rejects requests to routes annotated with {@link Required} with 403 once their vault is registered, before their
  * body is read. The controller repeats the check atomically with registering.
  *
  * @author yawkat
  */
-@ServerFilter(patterns = { "/register", "/register/" })
+@ServerFilter(patterns = { "/register", "/register/", "/totp/register", "/totp/register/" })
 @UnregisteredFilter.Required
 class UnregisteredFilter extends RouteAnnotationFilter {
-    private final DatabaseState state;
+    private final Vaults vaults;
 
-    UnregisteredFilter(DatabaseState state) {
+    UnregisteredFilter(Vaults vaults) {
         super(Required.class);
-        this.state = state;
+        this.vaults = vaults;
     }
 
     @Override
     @Nullable
     protected HttpResponse<?> filterRoute(HttpRequest<?> request) {
-        return state.isRegistered() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
+        return vaults.forPath(request.getPath()).isRegistered() ? HttpResponse.status(HttpStatus.FORBIDDEN) : null;
     }
 
     /**

@@ -14,7 +14,8 @@ import io.micronaut.scheduling.annotation.ExecuteOn;
 import java.io.IOException;
 
 /**
- * HTTP API of the database server, see SPEC.md. Request and response bodies are raw bytes.
+ * HTTP API of the database server, see SPEC.md. Request and response bodies are raw bytes. Every route exists for
+ * both vaults (see {@link Vaults}), the 2FA vault's below {@code /totp}.
  *
  * <p>Authorization starts in {@link SignatureFilter} and {@link UnregisteredFilter}, before the body is read. The
  * signature covers the body, so it is verified here.
@@ -29,28 +30,29 @@ class DatabaseController {
     // content type that HttpURLConnection sends.
     private static final byte[] EMPTY = new byte[0];
 
-    private final DatabaseState state;
+    private final Vaults vaults;
 
-    DatabaseController(DatabaseState state) {
-        this.state = state;
+    DatabaseController(Vaults vaults) {
+        this.vaults = vaults;
     }
 
     /**
-     * Returns the version and install salt, or 404 if the server is not registered yet.
+     * Returns the version and install salt, or 404 if the vault is not registered yet.
      */
-    @Get(uri = "/salt", produces = MediaType.APPLICATION_OCTET_STREAM)
-    HttpResponse<byte[]> salt() {
-        byte[] salt = state.getSaltResponse();
+    @Get(uris = { "/salt", "/totp/salt" }, produces = MediaType.APPLICATION_OCTET_STREAM)
+    HttpResponse<byte[]> salt(HttpRequest<?> request) {
+        byte[] salt = vaults.forPath(request.getPath()).getSaltResponse();
         return salt == null ? HttpResponse.notFound() : HttpResponse.ok(salt);
     }
 
     /**
-     * Registers the install salt and public key. Returns 403 if the server is registered already, 400 if the
+     * Registers the install salt and public key. Returns 403 if the vault is registered already, 400 if the
      * registration is malformed.
      */
-    @Put(uri = "/register", consumes = MediaType.ALL)
+    @Put(uris = { "/register", "/totp/register" }, consumes = MediaType.ALL)
     @UnregisteredFilter.Required
-    HttpResponse<?> register(@Nullable @Body byte[] registration) throws IOException {
+    HttpResponse<?> register(HttpRequest<?> request, @Nullable @Body byte[] registration) throws IOException {
+        DatabaseState state = vaults.forPath(request.getPath());
         try {
             return state.registerIfUnregistered(registration == null ? EMPTY : registration) ?
                     HttpResponse.ok() : HttpResponse.status(HttpStatus.FORBIDDEN);
@@ -63,10 +65,11 @@ class DatabaseController {
      * Returns the database, 401/403/429 if the request is rejected (see {@link SignatureFilter}), or 404 if no
      * database of this registration has been saved yet.
      */
-    @Get(uri = "/db", produces = MediaType.APPLICATION_OCTET_STREAM)
+    @Get(uris = { "/db", "/totp/db" }, produces = MediaType.APPLICATION_OCTET_STREAM)
     @SignatureFilter.Required
     @SuppressWarnings("unchecked")
     HttpResponse<byte[]> getDatabase(HttpRequest<?> request) throws IOException {
+        DatabaseState state = vaults.forPath(request.getPath());
         HttpResponse<?> rejection = SignatureFilter.verify(state, request, EMPTY);
         if (rejection != null) {
             return (HttpResponse<byte[]>) rejection;
@@ -79,9 +82,10 @@ class DatabaseController {
      * Saves the database. Returns 401/403/429 if the request is rejected (see {@link SignatureFilter}), 400 if the body
      * is not a database of this registration.
      */
-    @Put(uri = "/db", consumes = MediaType.ALL)
+    @Put(uris = { "/db", "/totp/db" }, consumes = MediaType.ALL)
     @SignatureFilter.Required
     HttpResponse<?> putDatabase(HttpRequest<?> request, @Nullable @Body byte[] db) throws IOException {
+        DatabaseState state = vaults.forPath(request.getPath());
         byte[] body = db == null ? EMPTY : db;
         HttpResponse<?> rejection = SignatureFilter.verify(state, request, body);
         if (rejection != null) {

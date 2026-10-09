@@ -73,6 +73,7 @@ The data directory contains:
 | `verifier`                       | The registration: install salt and the client's public key, set by the first client that saves (see SPEC.md) |
 | `<timestamp>`, e.g. `2026-09-26T16:54:45.392616657Z` | One encrypted database per upload, named by its ISO-8601 UTC time. Old versions are never deleted. |
 | `latest`                         | Symlink to the newest database file                                        |
+| `totp/`                          | The 2FA vault, with its own password, in the same layout (`verifier`, timestamped files, `latest`). Created at startup. See [SPEC.md](SPEC.md#2fa-vault). |
 
 Files are created owner-only (`rw-------`). The server logs a warning at startup if the data directory is accessible
 by other users. The data directory must support symlinks: on a file system without them (FAT, some SMB mounts) every
@@ -115,7 +116,8 @@ device you trust, in a private window.
 To reset a server, stop it and delete `verifier` and `latest` from the data directory. The next client that saves
 registers it again. This is also the only way to change the master password: the client that registers with the new
 password starts with an empty database (or with its local copy, if that is in the new format and it can decrypt it).
-The old timestamped files stay in place, encrypted under the old password.
+The old timestamped files stay in place, encrypted under the old password. The 2FA vault is reset the same way, with
+`totp/verifier` and `totp/latest`, independently of the password vault.
 
 ### Migrating from the old protocol
 

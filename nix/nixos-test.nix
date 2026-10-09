@@ -8,8 +8,8 @@
 }:
 
 let
-  # Prints the X-Auth header for a request: pw-auth METHOD PATH BODY_FILE, signed with /tmp/key.pem. See
-  # AuthProtocol.signingInput.
+  # Prints the X-Auth header for a request: pw-auth METHOD PATH BODY_FILE [KEY_FILE], signed with KEY_FILE
+  # (default /tmp/key.pem). See AuthProtocol.signingInput.
   pw-auth = writeShellApplication {
     name = "pw-auth";
     runtimeInputs = [
@@ -21,7 +21,7 @@ let
       nonce=$(head -c 16 /dev/urandom | xxd -p)
       body_hash=$(sha256sum < "$3" | cut -d' ' -f1)
       printf 'at.yawk.password/v1/request\n%s\n%s\n%s\n%s\n%s\n' "$ts" "$nonce" "$1" "$2" "$body_hash" > /tmp/msg
-      sig=$(openssl pkeyutl -sign -inkey /tmp/key.pem -rawin -in /tmp/msg | xxd -p -c 64)
+      sig=$(openssl pkeyutl -sign -inkey "''${4:-/tmp/key.pem}" -rawin -in /tmp/msg | xxd -p -c 64)
       echo "$ts $nonce $sig"
     '';
   };
@@ -66,8 +66,8 @@ testers.runNixOSTest {
         code = status(m, args)
         assert code == "403", f"expected request to be denied with 403, got status {code}"
 
-    def auth(m, method, path, body_file="/dev/null"):
-        return m.succeed(f"pw-auth {method} {path} {body_file}").strip()
+    def auth(m, method, path, body_file="/dev/null", key="/tmp/key.pem"):
+        return m.succeed(f"pw-auth {method} {path} {body_file} {key}").strip()
 
     def check_server(m, data_dir):
         m.wait_for_unit("password-server.service")
@@ -103,6 +103,23 @@ testers.runNixOSTest {
         h = auth(m, "GET", "/db")
         m.succeed(f"curl -sf -H 'X-Auth: {h}' -o /dev/null {url}/db")
         assert_denied(m, f"-H 'X-Auth: {h}' {url}/db")
+
+        # the 2FA vault: the same protocol below /totp, with its own registration and key, in dataDir/totp
+        assert status(m, f"{url}/totp/salt") == "404"
+        m.succeed("openssl genpkey -algorithm ed25519 -out /tmp/totp-key.pem")
+        m.succeed("head -c 32 /dev/urandom > /tmp/totp-salt")
+        m.succeed("{ printf '\\x01'; cat /tmp/totp-salt; openssl pkey -in /tmp/totp-key.pem -pubout -outform DER | tail -c 32; } > /tmp/totp-reg")
+        m.succeed(f"curl -sf -X PUT --data-binary @/tmp/totp-reg {url}/totp/register")
+        m.succeed(f"cmp /tmp/totp-reg {data_dir}/totp/verifier")
+        m.succeed("{ printf 'PWDB\\x01'; cat /tmp/totp-salt; head -c 1000 /dev/urandom; } > /tmp/totp-db")
+        h = auth(m, "PUT", "/totp/db", "/tmp/totp-db", "/tmp/totp-key.pem")
+        m.succeed(f"curl -sf -X PUT -H 'X-Auth: {h}' --data-binary @/tmp/totp-db {url}/totp/db")
+        h = auth(m, "GET", "/totp/db", key="/tmp/totp-key.pem")
+        m.succeed(f"curl -sf -H 'X-Auth: {h}' {url}/totp/db | cmp /tmp/totp-db -")
+        # the password vault's key doesn't open it, and its database is untouched
+        assert_denied(m, f"-H 'X-Auth: {auth(m, 'GET', '/totp/db')}' {url}/totp/db")
+        m.succeed(f"curl -sf -H 'X-Auth: {auth(m, 'GET', '/db')}' {url}/db | cmp /tmp/db -")
+        m.succeed(f"test \"$(stat -c '%U %a' {data_dir}/totp)\" = 'password 700'")
 
         # state lives in dataDir: a timestamped copy plus the `latest` link
         m.succeed(f"test -L {data_dir}/latest")

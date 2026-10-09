@@ -118,6 +118,62 @@ public class DatabaseControllerTest {
         Assert.assertEquals(putDb(auth.database(100)), HttpStatus.OK);
     }
 
+    private HttpResponse<byte[]> get(String path, String auth) {
+        return send(HttpRequest.GET(path).header(AuthProtocol.AUTH_HEADER, auth));
+    }
+
+    /**
+     * The 2FA vault has the same API below /totp, with its own registration and database.
+     */
+    @Test
+    public void testTotpVault() throws Exception {
+        ServerAuth totp = new ServerAuth();
+        Assert.assertEquals(send(HttpRequest.GET("/totp/salt")).getStatus(), HttpStatus.NOT_FOUND);
+        // registering one vault doesn't register the other, in either order
+        Assert.assertEquals(put("/totp/register", null, totp.registration()), HttpStatus.OK);
+        Assert.assertEquals(send(HttpRequest.GET("/salt")).getStatus(), HttpStatus.NOT_FOUND);
+        register();
+        Assert.assertEquals(put("/totp/register", null, new ServerAuth().registration()), HttpStatus.FORBIDDEN);
+        Assert.assertEquals(Arrays.copyOfRange(send(HttpRequest.GET("/totp/salt")).getBody().orElseThrow(), 1,
+                                               AuthProtocol.SALT_RESPONSE_LENGTH), totp.salt);
+        Assert.assertTrue(java.nio.file.Files.exists(server.getDataDirectory().resolve("totp/verifier")));
+
+        byte[] db = totp.database(1000);
+        Assert.assertEquals(put("/totp/db", totp.header("PUT", "/totp/db", db), db), HttpStatus.OK);
+        HttpResponse<byte[]> response = get("/totp/db", totp.header("GET", "/totp/db", new byte[0]));
+        Assert.assertEquals(response.getStatus(), HttpStatus.OK);
+        Assert.assertEquals(response.getBody().orElseThrow(), db);
+        // the password vault is untouched
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
+
+        // the vaults' keys and blobs are not interchangeable
+        Assert.assertEquals(get("/totp/db", auth.header("GET", "/totp/db", new byte[0])).getStatus(),
+                            HttpStatus.FORBIDDEN);
+        Assert.assertEquals(getDb(totp.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.FORBIDDEN);
+        byte[] passwordDb = auth.database(1000);
+        Assert.assertEquals(put("/totp/db", totp.header("PUT", "/totp/db", passwordDb), passwordDb),
+                            HttpStatus.BAD_REQUEST);
+        // a request signed for one vault can't be replayed against the other: the signature covers the path
+        Assert.assertEquals(get("/totp/db", totp.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * Failed signatures in one vault don't lock the other.
+     */
+    @Test
+    public void testTotpBackoffIsSeparate() throws Exception {
+        register();
+        ServerAuth totp = new ServerAuth();
+        Assert.assertEquals(put("/totp/register", null, totp.registration()), HttpStatus.OK);
+        ServerAuth attacker = new ServerAuth();
+        for (int i = 0; i <= DatabaseState.FREE_FAILURES; i++) {
+            get("/totp/db", attacker.header("GET", "/totp/db", new byte[0]));
+        }
+        Assert.assertEquals(get("/totp/db", totp.header("GET", "/totp/db", new byte[0])).getStatus(),
+                            HttpStatus.TOO_MANY_REQUESTS);
+        Assert.assertEquals(getDb(auth.header("GET", "/db", new byte[0])).getStatus(), HttpStatus.NOT_FOUND);
+    }
+
     @Test
     public void testDatabase() throws Exception {
         register();

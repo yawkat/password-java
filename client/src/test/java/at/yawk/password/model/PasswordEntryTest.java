@@ -11,7 +11,7 @@ public class PasswordEntryTest {
         entry.setValue("hunter2\nuser: me");
         PasswordBlob blob = new PasswordBlob();
         blob.getPasswords().add(entry);
-        DecryptedBlob decrypted = new DecryptedBlob();
+        DecryptedBlob<PasswordBlob> decrypted = new DecryptedBlob<>();
         decrypted.setData(blob);
 
         for (Object o : new Object[]{entry, blob, decrypted}) {

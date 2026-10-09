@@ -66,11 +66,12 @@ class DeviceCompatibilityTest {
     @Test
     fun blobCodecRoundTrip() {
         val keys = KeyMaterial.derive(password, ByteArray(32))
-        val decrypted = DecryptedBlob().apply {
+        val decrypted = DecryptedBlob<PasswordBlob>().apply {
             data = blob("example.com" to "hunter2\nuser")
             revision = 3
         }
-        assertEquals(decrypted, BlobCodec.decrypt(ObjectMapper(), keys, BlobCodec.encrypt(ObjectMapper(), keys, decrypted)))
+        val encrypted = BlobCodec.encrypt(ObjectMapper(), keys, decrypted)
+        assertEquals(decrypted, BlobCodec.decrypt(ObjectMapper(), keys, encrypted, PasswordBlob::class.java))
     }
 
     @Test
@@ -94,7 +95,7 @@ class DeviceCompatibilityTest {
     fun clientLoadsAndSavesLocalCopy() {
         // a local copy, as the client leaves it after an unlock
         val keys = KeyMaterial.derive(password, ByteArray(32))
-        val decrypted = DecryptedBlob().apply { data = blob("a" to "1") }
+        val decrypted = DecryptedBlob<PasswordBlob>().apply { data = blob("a" to "1") }
         MultiFileLocalStorageProvider(dir).save(BlobCodec.encrypt(ObjectMapper(), keys, decrypted))
 
         // nothing listens on port 1: the client loads the local copy, saves locally, then fails the upload

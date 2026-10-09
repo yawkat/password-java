@@ -35,7 +35,7 @@ public final class DatabaseServer {
                 .deduceEnvironment(false)
                 .properties(Map.of(
                         "micronaut.server.port", port.value(set),
-                        DatabaseState.DATA_DIR_PROPERTY, directory.value(set).getPath()
+                        Vaults.DATA_DIR_PROPERTY, directory.value(set).getPath()
                 ))
                 .start();
     }

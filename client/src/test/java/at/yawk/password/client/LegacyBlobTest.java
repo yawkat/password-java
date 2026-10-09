@@ -1,6 +1,7 @@
 package at.yawk.password.client;
 
 import at.yawk.password.model.DecryptedBlob;
+import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
@@ -30,7 +31,7 @@ public class LegacyBlobTest {
         byte[] bytes = fixture();
         Assert.assertTrue(LegacyBlob.isLegacy(bytes));
         Assert.assertNull(BlobCodec.installSalt(bytes));
-        DecryptedBlob decrypted = LegacyBlob.decrypt(new ObjectMapper(), PASSWORD, bytes);
+        DecryptedBlob<PasswordBlob> decrypted = LegacyBlob.decrypt(new ObjectMapper(), PASSWORD, bytes);
 
         Assert.assertEquals(decrypted.getRevision(), 0);
         List<PasswordEntry> entries = decrypted.getData().getPasswords();

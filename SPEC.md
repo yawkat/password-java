@@ -1,13 +1,14 @@
 # Specification
 
 This describes the protocol between client and server and the format of the stored database, as implemented in
-`shared` (`AuthProtocol`), `client` (`PasswordClient`, `DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`,
-`model/*`) and `server` (`DatabaseController`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`,
-`WebHeadersFilter`).
+`shared` (`AuthProtocol`, `Base32`), `client` (`VaultClient`, `PasswordClient`, `VaultKey`, `DatabaseClient`,
+`KeyMaterial`, `BlobCodec`, `LegacyBlob`, `otp/*`, `model/*`) and `server` (`DatabaseController`, `Vaults`,
+`DatabaseState`, `SignatureFilter`, `UnregisteredFilter`, `WebHeadersFilter`).
 
-The server stores one opaque blob and never sees the master password or the plaintext. One key derivation from the
-master password gives both the key that signs the client's requests and the keys that encrypt the blob. The server
-only stores the public half of the signing key.
+The server stores one opaque blob per vault and never sees a password or the plaintext. There are two vaults: the
+password vault, opened with the master password, and the [2FA vault](#2fa-vault), opened with its own password. Both
+use the same protocol. One key derivation from a vault's password gives both the key that signs the client's requests
+and the keys that encrypt the blob. The server only stores the public half of the signing key.
 
 All numbers are big-endian. `‖` is concatenation. `hex` is lowercase hexadecimal.
 
@@ -164,6 +165,20 @@ cannot be created (e.g. on FAT or some SMB mounts), the request fails and `lates
 link dangles ([#27](https://github.com/yawkat/password-java/issues/27)). The client's local copy uses the same code.
 On POSIX file systems, `verifier` and the database files are created with mode `0600`.
 
+### 2FA vault
+
+The 2FA vault holds the TOTP secrets and backup codes. It works exactly like the password vault, with the paths
+`/totp/salt`, `/totp/register` and `/totp/db` instead of `/salt`, `/register` and `/db`. It has its own password (the
+"backup password"), install salt, registration, nonces and backoff, and is stored in the subdirectory `totp` of the
+data directory (created with mode `0700` at startup), in the same layout. Registering one vault doesn't register the
+other: the first client that saves to `/totp/db` claims the 2FA vault, like the password vault.
+
+The signed path is `/totp/db`, so a request signed for one vault is never accepted by the other, even if both had the
+same key. The blob format is the same, and the server checks the header against the 2FA vault's registration.
+
+The master password doesn't open the 2FA vault, so both factors are not behind the same password. The server holds
+both encrypted vaults; each costs one Argon2id run per guess of its own password.
+
 ## Encrypted blob
 
 This is the body of `GET /db` and `PUT /db` and the content of the stored files.
@@ -212,6 +227,45 @@ N = 2^16, r = 8, p = 1, 32-byte key and salt).
 | `data.passwords[].value` | string          | Free text. By convention, the first line (up to `\n` or `\r`) is the password; the rest holds username, notes and so on. |
 | `revision`               | integer         | Incremented by every save (0 in legacy blobs)                        |
 
+The 2FA vault has the same `revision`, and `data` holds its accounts:
+
+```json
+{
+  "data": {
+    "accounts": [
+      {
+        "id": "6f1c0a52-8d0e-4c1e-9f3b-2a8f4d6e7b90",
+        "type": "totp",
+        "issuer": "GitHub",
+        "label": "alice",
+        "secret": "JBSWY3DPEHPK3PXP",
+        "algorithm": "SHA1",
+        "digits": 6,
+        "period": 30,
+        "backupCodes": "abcd-1234\nefgh-5678"
+      }
+    ]
+  },
+  "revision": 3
+}
+```
+
+| Field                            | Type    | Meaning                                                              |
+|----------------------------------|---------|----------------------------------------------------------------------|
+| `data.accounts`                  | array   | Accounts, in display order                                           |
+| `data.accounts[].id`             | string  | Random UUID, to tell accounts apart                                  |
+| `data.accounts[].type`           | string  | `totp`, the only type so far                                         |
+| `data.accounts[].issuer`         | string  | The service, may be empty                                            |
+| `data.accounts[].label`          | string  | The account at the service, may be empty                             |
+| `data.accounts[].secret`         | string  | Base32 (RFC 4648), upper case, without padding or separators         |
+| `data.accounts[].algorithm`      | string  | HMAC of the TOTP: `SHA1`, `SHA256` or `SHA512`                       |
+| `data.accounts[].digits`         | integer | Code length, 6 to 10                                                 |
+| `data.accounts[].period`         | integer | Seconds per code, e.g. 30, or 10 for Authy's own tokens              |
+| `data.accounts[].backupCodes`    | string  | Free text: the account's backup codes and anything kept with them    |
+
+The code at unix time `t` is the HOTP (RFC 4226) of the counter `floor(t / period)`, truncated to `digits` digits
+(RFC 6238). Clients reject a vault with unknown fields rather than drop them on the next save.
+
 ## Client behaviour
 
 Non-2xx responses are errors, including redirects that the HTTP client does not follow (e.g. from `http` to
@@ -255,6 +309,15 @@ Each modification encrypts the whole database with revision + 1, a new blob salt
 If a request fails, the local copy already contains the new blob and the error is raised. The client does not merge:
 a save replaces whatever the server had, including after the database was loaded from the local copy. The apps ask
 for confirmation before the first save in that state.
+
+### Exported keys
+
+Instead of the password, a client can open a vault with an exported key: `install_salt ‖ root` (64 bytes), taken
+from a client that was unlocked with the password. It opens and saves the vault without the Argon2id run, but only
+for that install salt: for another one (e.g. after the vault on the server was reset and created again) it fails like
+a wrong password. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
+fingerprint, so that a fingerprint opens the 2FA vault. The exported key opens the vault as the password does, so it
+is kept as safe as the data.
 
 ### Apps
 

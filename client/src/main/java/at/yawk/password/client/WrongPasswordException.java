@@ -10,4 +10,8 @@ public class WrongPasswordException extends Exception {
     WrongPasswordException() {
         super("Wrong password, or the database was tampered with");
     }
+
+    WrongPasswordException(String message) {
+        super(message);
+    }
 }
