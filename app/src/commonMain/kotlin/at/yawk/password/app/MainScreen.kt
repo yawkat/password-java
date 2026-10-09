@@ -380,7 +380,7 @@ fun MainScreen(
                 }
             }
             HorizontalDivider()
-            StatusBar(state.status, busy, visible.size, state.entries.size)
+            StatusBar(state.status, busy, countText(visible.size, state.entries.size, "entry", "entries"))
         }
     } else {
         Column(Modifier.fillMaxSize()) {
@@ -468,7 +468,7 @@ fun MainScreen(
                 }
             }
             HorizontalDivider()
-            StatusBar(state.status, busy, visible.size, state.entries.size)
+            StatusBar(state.status, busy, countText(visible.size, state.entries.size, "entry", "entries"))
         }
     }
 
@@ -623,7 +623,7 @@ private fun ToolButton(
 }
 
 @Composable
-private fun SearchField(
+internal fun SearchField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
@@ -657,7 +657,7 @@ private fun SearchField(
  * Title bar of a page of the compact layout, with a back button.
  */
 @Composable
-private fun CompactBar(
+internal fun CompactBar(
     title: String,
     onBack: () -> Unit,
     backEnabled: Boolean = true,
@@ -681,7 +681,7 @@ private fun CompactBar(
 }
 
 @Composable
-private fun OfflineBanner() {
+internal fun OfflineBanner() {
     Text(
         "Showing the local copy, not the server copy. Saving will overwrite the server copy.",
         color = Color.Black,
@@ -963,11 +963,11 @@ private fun EntryPane(
 }
 
 @Composable
-private fun StatusBar(
+internal fun StatusBar(
     status: StatusMessage?,
     busy: Boolean,
-    visibleCount: Int,
-    totalCount: Int,
+    /** On the right, e.g. the number of entries */
+    countText: String,
 ) {
     var shown by remember { mutableStateOf<StatusMessage?>(null) }
     LaunchedEffect(status, busy) {
@@ -986,11 +986,7 @@ private fun StatusBar(
             modifier = Modifier.weight(1f),
         )
         Text(
-            when {
-                visibleCount != totalCount -> "$visibleCount of $totalCount entries"
-                totalCount == 1 -> "1 entry"
-                else -> "$totalCount entries"
-            },
+            countText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -998,7 +994,7 @@ private fun StatusBar(
 }
 
 @Composable
-private fun ConfirmDialog(
+internal fun ConfirmDialog(
     title: String,
     text: String,
     confirm: String,
@@ -1025,7 +1021,7 @@ private fun ConfirmDialog(
 }
 
 @Composable
-private fun MessageDialog(title: String, text: String, onDismiss: () -> Unit) {
+internal fun MessageDialog(title: String, text: String, onDismiss: () -> Unit) {
     val okFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { okFocus.requestFocus() }
     AlertDialog(
@@ -1036,4 +1032,13 @@ private fun MessageDialog(title: String, text: String, onDismiss: () -> Unit) {
             Button(onClick = onDismiss, modifier = Modifier.focusRequester(okFocus)) { Text("OK") }
         },
     )
+}
+
+/**
+ * "3 entries", or "1 of 3 entries" while a search hides some.
+ */
+internal fun countText(visibleCount: Int, totalCount: Int, singular: String, plural: String) = when {
+    visibleCount != totalCount -> "$visibleCount of $totalCount $plural"
+    totalCount == 1 -> "1 $singular"
+    else -> "$totalCount $plural"
 }
