@@ -205,8 +205,10 @@ down somewhere safe. It is what opens your 2FA codes when your phone is lost.
 
 Open the vault with *2FA codes* on the unlock screen. The first time, the app offers to create it. Then:
 
-- Click or tap an account to copy its current code. Codes are cleared from the clipboard after 30 seconds, like
-  passwords. Shortly before a code expires, the next one is shown as well.
+- The codes turn on a drum: the current code moves up as it runs out, with the next one below it, so you can start
+  typing the next code before the current one expires.
+- Click or tap an account to copy its current code, or the next one if the current one expires within five seconds.
+  Codes are cleared from the clipboard after 30 seconds, like passwords.
 - *Add* scans the QR code with the camera (Android), takes its `otpauth://` link (most sites show the link or the
   secret key next to the code), or the fields by hand. Codes with other parameters than 6 digits every 30 seconds work too, e.g. 7 digits every 10 seconds
   for the sites that use Authy's own tokens, such as Cloudflare. HOTP (counter-based) and Steam codes are not supported.

@@ -81,6 +81,15 @@ class OtpAccountsTest {
     }
 
     @Test
+    fun copyNextCodeShortlyBeforeExpiry() {
+        val account = account("x")
+        assertEquals(codeOrNull(account, 0)!! to false, codeToCopy(account, 0))
+        assertEquals(codeOrNull(account, 0)!! to false, codeToCopy(account, 30_000 - COPY_NEXT_CODE_MS))
+        assertEquals(codeOrNull(account, 30_000)!! to true, codeToCopy(account, 30_000 - COPY_NEXT_CODE_MS + 1))
+        assertNull(codeToCopy(account("x", secret = "not base32!"), 0))
+    }
+
+    @Test
     fun draft() {
         val draft = OtpDraft(issuer = "GitHub", label = "me", secret = "jbsw y3dp ehpk 3pxp", digits = "7", period = "10")
         val account = draft.toAccount("some-id").getOrThrow()

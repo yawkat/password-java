@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -47,9 +50,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -63,22 +68,21 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import at.yawk.password.model.OtpAccount
 import at.yawk.password.model.OtpAlgorithm
 import at.yawk.password.otp.Totp
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/**
- * Show the next code as well once the current one is valid for less than this.
- */
-private const val SHOW_NEXT_CODE_MS = 5000L
 
 /**
  * The 2FA vault: its lock screen, or the unlocked accounts.
@@ -286,12 +290,13 @@ private fun OtpScreen(
 
     fun copy(account: OtpAccount) {
         if (viewModel.state.value !is OtpState.Unlocked) return
-        val code = codeOrNull(account, System.currentTimeMillis())
+        val copied = codeToCopy(account, System.currentTimeMillis())
         viewModel.showStatus(
             when {
-                code == null -> "“${accountTitle(account)}” has invalid parameters, edit it"
-                !clipboard.copySecret(code) -> "Could not copy to the clipboard, try again"
-                else -> "Copied the code of “${accountTitle(account)}” (cleared in ${clipboard.clearAfterSeconds}s)"
+                copied == null -> "“${accountTitle(account)}” has invalid parameters, edit it"
+                !clipboard.copySecret(copied.first) -> "Could not copy to the clipboard, try again"
+                else -> "Copied the ${if (copied.second) "next " else ""}code of “${accountTitle(account)}” " +
+                    "(cleared in ${clipboard.clearAfterSeconds}s)"
             },
         )
     }
@@ -650,25 +655,65 @@ private fun Countdown(account: OtpAccount, now: Long) {
 }
 
 /**
- * The next code, once the current one is about to expire: with 10 s codes there is little time to type one.
+ * The codes on a drum that turns continuously: the current code moves up from the bottom row to the top row as it runs
+ * out and the next one follows below it, so that the next code can be read before the current one expires (with 10 s codes there is
+ * little time to type one). [now] picks the codes; the position follows the frame time, so that only the layout
+ * changes on every frame.
  */
 @Composable
-private fun NextCode(account: OtpAccount, now: Long) {
-    if (account.period <= 0 || Totp.millisUntilNext(account, now) > SHOW_NEXT_CODE_MS) return
-    val next = codeOrNull(account, now + Totp.millisUntilNext(account, now)) ?: return
-    Text(
-        "next ${formatCode(next)}",
-        style = MaterialTheme.typography.bodySmall,
-        fontFamily = FontFamily.Monospace,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun CodeDrum(account: OtpAccount, now: Long, style: TextStyle) {
+    val code = codeOrNull(account, now)
+    if (code == null || account.period <= 0) {
+        Text(
+            code?.let(::formatCode) ?: "invalid",
+            style = style,
+            fontFamily = FontFamily.Monospace,
+            color = if (code == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+        )
+        return
+    }
+    val frameTime = produceState(now) {
+        while (true) {
+            withFrameMillis { }
+            value = System.currentTimeMillis()
+        }
+    }
+    val periodMillis = account.period * 1000L
+    val step = Math.floorDiv(now, periodMillis)
+    val rowHeight = with(LocalDensity.current) { style.lineHeight.toDp() }
+    // two rows: the current code starts in the bottom one, below the previous code, and the next one comes into view
+    // as it moves up. The code after that only appears once the next one is current.
+    Box(Modifier.height(rowHeight * 2).clipToBounds()) {
+        // four rows, taller than the window: it clips them
+        Column(
+            Modifier.wrapContentHeight(Alignment.Top, unbounded = true).offset {
+                // relative to [step] rather than wrapped, so that a frame past the change before [now] catches up
+                // doesn't jump back
+                val progress = (frameTime.value - step * periodMillis).toFloat() / periodMillis
+                IntOffset(0, (-progress * rowHeight.toPx()).roundToInt())
+            },
+        ) {
+            val colors = MaterialTheme.colorScheme
+            for (s in step - 1..step + 2) {
+                Text(
+                    codeOrNull(account, s * periodMillis)?.let(::formatCode) ?: "",
+                    Modifier.height(rowHeight),
+                    style = style,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (s == step) colors.primary else colors.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
 }
 
 /**
  * The current code with its countdown, for previews.
  */
 @Composable
-private fun LiveCode(account: OtpAccount, clock: () -> Long, style: androidx.compose.ui.text.TextStyle) {
+private fun LiveCode(account: OtpAccount, clock: () -> Long, style: TextStyle) {
     val now = clock()
     Text(
         codeOrNull(account, now)?.let(::formatCode) ?: "invalid",
@@ -685,7 +730,6 @@ private fun LiveCode(account: OtpAccount, clock: () -> Long, style: androidx.com
 @Composable
 private fun AccountRow(account: OtpAccount, clock: () -> Long, onCopy: () -> Unit, onOpen: () -> Unit) {
     val now = clock()
-    val code = codeOrNull(account, now)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onCopy).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -700,16 +744,7 @@ private fun AccountRow(account: OtpAccount, clock: () -> Long, onCopy: () -> Uni
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    if (code == null) "invalid" else formatCode(code),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (code == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                )
-                NextCode(account, now)
-            }
+            CodeDrum(account, now, MaterialTheme.typography.headlineSmall)
         }
         Countdown(account, now)
         TextButton(onClick = onOpen) { Text("›") }
@@ -741,15 +776,9 @@ private fun AccountDetail(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(
-                if (code == null) "invalid" else formatCode(code),
-                style = MaterialTheme.typography.displaySmall,
-                fontFamily = FontFamily.Monospace,
-                color = if (code == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            )
+            CodeDrum(account, now, MaterialTheme.typography.displaySmall)
             Countdown(account, now)
         }
-        NextCode(account, now)
         Button(onClick = onCopy, enabled = code != null) { Text("Copy code") }
         Text(
             "${account.algorithm} · ${account.digits} digits · every ${account.period} s",
