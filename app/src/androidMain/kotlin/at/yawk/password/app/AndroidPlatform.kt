@@ -40,6 +40,11 @@ class AndroidPlatform(
      */
     override fun openOtpStorage(config: AppConfig): LocalStorageProvider = openDirectory(File(filesDir, "totp"))
 
+    /**
+     * The key behind the fingerprint, in `filesDir/totp-key` (encrypted by the Android Keystore).
+     */
+    override val otpKeyStore: OtpKeyStore by lazy { AndroidOtpKeyStore(File(filesDir, "totp-key")) }
+
     private fun openDirectory(directory: File): LocalStorageProvider {
         if (!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("Could not create $directory")

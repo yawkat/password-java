@@ -48,6 +48,11 @@ interface Platform {
      * @throws Exception if the file can't be read
      */
     fun pickTextFile(): String? = null
+
+    /**
+     * Where the key for opening the 2FA vault with a fingerprint is kept, or `null` if the platform has none.
+     */
+    val otpKeyStore: OtpKeyStore? get() = null
 }
 
 /**

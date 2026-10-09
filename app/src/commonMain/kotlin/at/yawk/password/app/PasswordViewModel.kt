@@ -82,10 +82,17 @@ class PasswordViewModel(
     private var backgroundSince: Long? = null
     private var backgroundLock: Job? = null
 
+    /**
+     * The server URL of the configuration, as saved. The one in [UiState.Locked] is what the user typed.
+     */
+    private var savedUrl: String? = null
+
     init {
         viewModelScope.launch {
             _state.value = try {
-                UiState.Locked(withContext(ioDispatcher) { platform.loadConfig() })
+                val config = withContext(ioDispatcher) { platform.loadConfig() }
+                savedUrl = config.url
+                UiState.Locked(config)
             } catch (e: Exception) {
                 log.warn("Could not read configuration", e)
                 UiState.Error("Could not read configuration: $e")
@@ -103,7 +110,7 @@ class PasswordViewModel(
             return
         }
         val bytes = encodePassword(password)
-        val config = locked.config.copy(url = url.trim().ifEmpty { locked.config.url })
+        val config = locked.config.copy(url = effectiveUrl(url))
         _state.value = UiState.Unlocking(config)
         val unlockSession = session
         viewModelScope.launch {
@@ -121,7 +128,7 @@ class PasswordViewModel(
                     this@PasswordViewModel.password = bytes
                     this@PasswordViewModel.config = config
                     // only remember a URL that worked, and don't let a failure to do so fail the unlock
-                    urlSaveError = if (config.url != locked.config.url) saveUrl(config.url) else null
+                    urlSaveError = if (config.url != savedUrl) saveUrl(config.url) else null
                     if (opened == null) {
                         pendingClient = client
                         _state.value = UiState.ConfirmCreate(config)
@@ -239,8 +246,22 @@ class PasswordViewModel(
         }
     }
 
+    /**
+     * The URL typed on the lock screen, kept in the state so that it survives a trip to the 2FA codes and back. It is
+     * only saved once an unlock with it worked.
+     */
+    fun editUrl(url: String) {
+        _state.update { if (it is UiState.Locked) it.copy(config = it.config.copy(url = url)) else it }
+    }
+
+    /**
+     * The server to use for a typed [url]: the configured one if it is empty.
+     */
+    fun effectiveUrl(url: String) = url.trim().ifEmpty { savedUrl ?: url }
+
     private suspend fun saveUrl(url: String): String? = try {
         withContext(ioDispatcher) { platform.saveUrl(url) }
+        savedUrl = url
         null
     } catch (e: Exception) {
         log.warn("Could not save the server URL", e)

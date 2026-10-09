@@ -64,7 +64,17 @@ class OtpViewModel(
 
     private var config: AppConfig? = null
     private var store: OtpStore? = null
+    /** Client of [store], for exporting its key */
+    private var client: VaultClient<OtpBlob>? = null
+    /** The backup password, or `null` if the vault was opened with the fingerprint */
     private var password: ByteArray? = null
+
+    private val keyStore: OtpKeyStore? = platform.otpKeyStore
+
+    /**
+     * The biometric check, set by the activity while it exists (Android). Fingerprint unlock needs it and [keyStore].
+     */
+    var authenticator: Authenticator? = null
     /** Client waiting for [confirmCreate] */
     private var pendingClient: VaultClient<OtpBlob>? = null
 
@@ -89,7 +99,189 @@ class OtpViewModel(
     fun open(config: AppConfig) {
         if (_state.value != OtpState.Closed) return
         this.config = config
-        _state.value = OtpState.Locked(config)
+        _state.value = locked(config)
+        // with a fingerprint key, opening the vault takes nothing more than the fingerprint
+        if (fingerprintAvailable(config)) {
+            unlockWithFingerprint()
+        }
+    }
+
+    /** Whether there is a fingerprint key for the server of [config], and a way to check the fingerprint */
+    private fun fingerprintAvailable(config: AppConfig) = authenticator != null && keyStore?.keyUrl() == config.url
+
+    private fun locked(config: AppConfig, error: String? = null) =
+        OtpState.Locked(config, error, fingerprint = fingerprintAvailable(config))
+
+    /**
+     * Open the vault with the key that [enableFingerprint] stored, after a biometric check.
+     */
+    fun unlockWithFingerprint() {
+        val locked = _state.value as? OtpState.Locked ?: return
+        val keyStore = keyStore ?: return
+        val authenticator = authenticator ?: return
+        val config = locked.config
+        if (!fingerprintAvailable(config)) return
+        _state.value = OtpState.Unlocking(config)
+        val unlockSession = session
+        viewModelScope.launch {
+            mutex.withLock {
+                var exported: ByteArray? = null
+                try {
+                    exported = keyStore.load(authenticator)
+                    if (exported == null) {
+                        // cancelled
+                        if (session == unlockSession) _state.value = locked(config)
+                        return@withLock
+                    }
+                    val key = VaultKey.ofExportedKey(exported)
+                    val (client, opened) = withContext(ioDispatcher) {
+                        val client = VaultClient.otp(config.url, platform.openOtpStorage(config), key)
+                        client to OtpStore.open(client)
+                    }
+                    if (session != unlockSession) return@withLock
+                    if (opened == null) {
+                        _state.value = locked(config, "The 2FA vault is empty. Unlock it with the backup password.")
+                        return@withLock
+                    }
+                    this@OtpViewModel.password = null
+                    this@OtpViewModel.client = client
+                    saveUrl(config.url)
+                    showUnlocked(
+                        opened,
+                        if (opened.localReason == ClientValue.LocalReason.VAULT_RESET) {
+                            "The 2FA vault was reset on the server. Changes stay on this device until you unlock " +
+                                "with the backup password."
+                        } else {
+                            localCopyStatus(opened.localReason) ?: "${accountCount(opened.accounts.size)} loaded"
+                        },
+                    )
+                } catch (e: Exception) {
+                    log.warn("Unlocking the 2FA vault with the fingerprint failed", e)
+                    val message = when (e) {
+                        is OtpKeyInvalidatedException -> {
+                            keyStore.delete()
+                            "The fingerprint key is no longer valid (was the screen lock changed?). Unlock with the " +
+                                "backup password, then enable the fingerprint again."
+                        }
+                        is WrongPasswordException -> {
+                            // The server of the key has another vault now: it was created again, and the key is
+                            // useless from now on.
+                            keyStore.delete()
+                            "The 2FA vault was created again on the server. Unlock it with the backup password, then " +
+                                "enable the fingerprint again."
+                        }
+                        is AuthenticationException -> e.message
+                        else -> unlockErrorMessage(e)
+                    }
+                    if (session == unlockSession) _state.value = locked(config, message)
+                } finally {
+                    exported?.wipe()
+                }
+            }
+        }
+    }
+
+    /**
+     * Store the key of the open vault behind the fingerprint, so that the next unlock needs only that.
+     */
+    fun enableFingerprint() {
+        val unlocked = _state.value as? OtpState.Unlocked ?: return
+        val keyStore = keyStore ?: return
+        val authenticator = authenticator ?: return
+        val client = client ?: return
+        val url = config?.url ?: return
+        if (unlocked.busy) return
+        _state.value = unlocked.copy(busy = true, status = StatusMessage("Waiting for the fingerprint…"))
+        val operationSession = session
+        viewModelScope.launch {
+            mutex.withLock {
+                var exported: ByteArray? = null
+                val result = try {
+                    exported = try {
+                        client.exportKey()
+                    } catch (e: IllegalStateException) {
+                        throw AuthenticationException(
+                            "The 2FA vault is not on the server yet. Add an account first, then enable the fingerprint.",
+                        )
+                    }
+                    if (keyStore.store(exported, url, authenticator)) "Fingerprint unlock enabled" else null
+                } catch (e: Exception) {
+                    log.warn("Enabling the fingerprint unlock failed", e)
+                    if (session == operationSession) {
+                        updateUnlocked {
+                            it.copy(busy = false, status = null, error = ErrorMessage("Fingerprint", e.message ?: e.toString()))
+                        }
+                    }
+                    return@withLock
+                } finally {
+                    exported?.wipe()
+                }
+                if (session == operationSession) {
+                    updateUnlocked {
+                        it.copy(
+                            busy = false,
+                            status = result?.let(::StatusMessage),
+                            offerFingerprint = result == null,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** The user declined the fingerprint unlock in this session */
+    private var fingerprintOfferDismissed = false
+
+    /**
+     * Whether to offer [enableFingerprint]: opened with the password, on a device that can keep the key, none is kept
+     * yet, and the vault is on the server (a new one only after its first save). Only while no other client call runs.
+     */
+    private fun shouldOfferFingerprint(): Boolean {
+        val client = client
+        val config = config
+        val keyStore = keyStore
+        // a key of another server is replaced
+        if (password == null || authenticator == null || keyStore == null || client == null || config == null ||
+            keyStore.keyUrl() == config.url || fingerprintOfferDismissed
+        ) {
+            return false
+        }
+        return try {
+            client.exportKey().wipe()
+            true
+        } catch (e: IllegalStateException) {
+            false
+        }
+    }
+
+    /**
+     * Don't offer the fingerprint unlock again in this session.
+     */
+    fun dismissFingerprintOffer() {
+        fingerprintOfferDismissed = true
+        updateUnlocked { it.copy(offerFingerprint = false) }
+    }
+
+    /**
+     * Remember a server URL that worked, like [PasswordViewModel] does. A failure to do so doesn't matter here.
+     */
+    private suspend fun saveUrl(url: String) {
+        try {
+            withContext(ioDispatcher) {
+                if (platform.loadConfig().url != url) platform.saveUrl(url)
+            }
+        } catch (e: Exception) {
+            log.warn("Could not save the server URL", e)
+        }
+    }
+
+    /**
+     * Delete the fingerprint key: from now on, only the backup password opens the vault on this device.
+     */
+    fun forgetFingerprint() {
+        val locked = _state.value as? OtpState.Locked ?: return
+        keyStore?.delete()
+        _state.value = locked.copy(fingerprint = false)
     }
 
     /**
@@ -119,17 +311,19 @@ class OtpViewModel(
                         return@withLock
                     }
                     this@OtpViewModel.password = bytes
+                    this@OtpViewModel.client = client
+                    saveUrl(config.url)
                     if (opened == null) {
                         pendingClient = client
                         _state.value = OtpState.ConfirmCreate(config)
                     } else {
-                        showUnlocked(opened, localCopyStatus(opened.localReason) ?: "${opened.accounts.size} accounts loaded")
+                        showUnlocked(opened, localCopyStatus(opened.localReason) ?: "${accountCount(opened.accounts.size)} loaded")
                     }
                 } catch (e: Exception) {
                     log.warn("Unlocking the 2FA vault failed", e)
                     bytes.wipe()
                     if (session == unlockSession) {
-                        _state.value = OtpState.Locked(config, unlockErrorMessage(e))
+                        _state.value = locked(config, unlockErrorMessage(e))
                     }
                 }
             }
@@ -148,10 +342,11 @@ class OtpViewModel(
         repeated.wipe()
         pendingClient = null
         if (matches) {
+            this.client = client
             showUnlocked(OtpStore.createEmpty(client), "Created a new, empty 2FA vault")
         } else {
             wipePassword()
-            _state.value = OtpState.Locked(confirm.config, "The passwords do not match.")
+            _state.value = locked(confirm.config, "The passwords do not match.")
         }
     }
 
@@ -159,7 +354,7 @@ class OtpViewModel(
         val confirm = _state.value as? OtpState.ConfirmCreate ?: return
         pendingClient = null
         wipePassword()
-        _state.value = OtpState.Locked(confirm.config)
+        _state.value = locked(confirm.config)
     }
 
     fun lock() {
@@ -179,6 +374,8 @@ class OtpViewModel(
         }
         session++
         store = null
+        client = null
+        fingerprintOfferDismissed = false
         screenState = OtpScreenState()
         pendingClient = null
         idleLock?.cancel()
@@ -187,7 +384,7 @@ class OtpViewModel(
         backgroundLock = null
         val password = password
         this.password = null
-        _state.value = OtpState.Locked(config)
+        _state.value = locked(config)
         if (mutex.tryLock()) {
             try {
                 password?.wipe()
@@ -209,6 +406,7 @@ class OtpViewModel(
      */
     fun onBackground() {
         if (backgroundSince != null) return
+        lockedInBackground = _state.value is OtpState.Unlocked
         if (_state.value !is OtpState.Unlocked || !screenState.isModified) {
             lockNow()
             return
@@ -225,16 +423,29 @@ class OtpViewModel(
      * have run while the process was frozen.
      */
     fun onForeground() {
-        val since = backgroundSince ?: return
+        val since = backgroundSince
         backgroundSince = null
         backgroundLock?.cancel()
         backgroundLock = null
-        if (clock() - since >= backgroundDraftTimeoutMs) {
-            lockNow()
-        } else {
-            onActivity()
+        if (since != null) {
+            if (clock() - since >= backgroundDraftTimeoutMs) {
+                lockNow()
+            } else {
+                onActivity()
+            }
+        }
+        // back to a vault that the background locked: open it again with the fingerprint right away
+        if (lockedInBackground) {
+            lockedInBackground = false
+            val locked = _state.value as? OtpState.Locked
+            if (locked != null && fingerprintAvailable(locked.config)) {
+                unlockWithFingerprint()
+            }
         }
     }
+
+    /** The vault was unlocked when the app went to the background */
+    private var lockedInBackground = false
 
     /**
      * The user did something (key press, click, touch): postpones the idle lock.
@@ -261,7 +472,12 @@ class OtpViewModel(
     private fun showUnlocked(store: OtpStore, status: String) {
         this.store = store
         screenState = OtpScreenState()
-        _state.value = OtpState.Unlocked(store.accounts, store.localReason, status = StatusMessage(status))
+        _state.value = OtpState.Unlocked(
+            store.accounts,
+            store.localReason,
+            status = StatusMessage(status),
+            offerFingerprint = shouldOfferFingerprint(),
+        )
         startIdleLock()
     }
 
@@ -297,13 +513,13 @@ class OtpViewModel(
      * Add the accounts of an import with a single save.
      */
     fun import(accounts: List<OtpAccount>): Deferred<Boolean> = succeeded(modify(
-        success = { "Imported ${accounts.size} accounts" },
+        success = { "Imported ${accountCount(accounts.size)}" },
         busyText = "Saving…",
         errorTitle = "Import failed",
     ) { store -> store.addAll(accounts) })
 
     fun reload(): Deferred<Boolean> = succeeded(modify(
-        success = { store -> localCopyStatus(store.localReason) ?: "Reloaded ${store.accounts.size} accounts" },
+        success = { store -> localCopyStatus(store.localReason) ?: "Reloaded ${accountCount(store.accounts.size)}" },
         busyText = "Reloading…",
         errorTitle = "Reload failed",
     ) { store -> store.reload() })
@@ -346,12 +562,14 @@ class OtpViewModel(
                 try {
                     withContext(ioDispatcher) { operation(store) }
                     if (session != operationSession) return@withLock null
+                    val offerFingerprint = shouldOfferFingerprint()
                     updateUnlocked {
                         it.copy(
                             accounts = store.accounts,
                             localReason = store.localReason,
                             busy = false,
                             status = StatusMessage(success(store)),
+                            offerFingerprint = offerFingerprint,
                         )
                     }
                     Unit
@@ -382,11 +600,15 @@ class OtpViewModel(
 
     override fun onCleared() {
         store = null
+        client = null
         pendingClient = null
+        authenticator = null
         wipePassword()
     }
 
     internal companion object {
+        fun accountCount(count: Int) = if (count == 1) "1 account" else "$count accounts"
+
         fun unlockErrorMessage(e: Exception): String {
             val message = e.message ?: e.toString()
             return when {

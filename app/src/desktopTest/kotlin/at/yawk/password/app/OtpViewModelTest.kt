@@ -227,6 +227,204 @@ class OtpViewModelTest {
         assertEquals("", vm.screenState.draft.issuer, "drafts are gone with the session")
     }
 
+    /** A vault with one account on the server, created with the password "backup" */
+    private fun existingVault() {
+        val creator = newViewModel()
+        creator.create("backup")
+        assertTrue(runBlocking { creator.save(account("A")).await() })
+        creator.close()
+    }
+
+    private fun fingerprintViewModel(keyStore: FakeOtpKeyStore, authenticator: FakeAuthenticator): OtpViewModel {
+        platform.otpKeyStore = keyStore
+        return newViewModel().also { it.authenticator = authenticator }
+    }
+
+    @Test
+    fun fingerprint() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val authenticator = FakeAuthenticator()
+        val vm = fingerprintViewModel(keyStore, authenticator)
+
+        // without a key, opening asks for the password, which offers the fingerprint
+        vm.open(config)
+        assertEquals(false, vm.await<OtpState.Locked>().fingerprint)
+        vm.unlock("backup")
+        assertTrue(vm.await<OtpState.Unlocked>().offerFingerprint)
+        vm.enableFingerprint()
+        val enabled = vm.awaitIdle()
+        assertEquals("Fingerprint unlock enabled", enabled.status?.text)
+        assertEquals(false, enabled.offerFingerprint)
+        assertNotNull(keyStore.key)
+
+        // opening again takes nothing but the fingerprint, and the vault can be changed
+        vm.close()
+        vm.open(config)
+        val unlocked = vm.await<OtpState.Unlocked>()
+        assertEquals(listOf("A"), unlocked.accounts.map { it.issuer })
+        assertEquals(false, unlocked.offerFingerprint)
+        assertTrue(runBlocking { vm.save(account("B")).await() })
+
+        // the change reached the server
+        platform.otpKeyStore = null
+        platform.otpStorage = MemoryStorageProvider()
+        val other = newViewModel()
+        other.open(config)
+        other.unlock("backup")
+        assertEquals(listOf("A", "B"), other.await<OtpState.Unlocked>().accounts.map { it.issuer })
+    }
+
+    /**
+     * Back from the background, a vault that was locked there opens with the fingerprint right away.
+     */
+    @Test
+    fun fingerprintAfterBackground() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val authenticator = FakeAuthenticator()
+        val vm = fingerprintViewModel(keyStore, authenticator)
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.onBackground()
+        assertTrue(vm.state.value is OtpState.Locked)
+        vm.onForeground()
+        vm.await<OtpState.Unlocked>()
+        assertEquals(2, authenticator.count)
+        // a vault that was locked anyway stays so
+        vm.lock()
+        vm.onBackground()
+        vm.onForeground()
+        assertTrue(vm.state.value is OtpState.Locked)
+        assertEquals(2, authenticator.count)
+    }
+
+    @Test
+    fun fingerprintCancelled() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val authenticator = FakeAuthenticator()
+        val vm = fingerprintViewModel(keyStore, authenticator)
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.close()
+
+        authenticator.cancel = true
+        vm.open(config)
+        val locked = vm.await { it is OtpState.Locked && authenticator.count == 2 } as OtpState.Locked
+        assertNull(locked.error)
+        assertTrue(locked.fingerprint, "the key is kept")
+        authenticator.cancel = false
+        vm.unlockWithFingerprint()
+        vm.await<OtpState.Unlocked>()
+    }
+
+    @Test
+    fun fingerprintInvalidated() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore().apply { key = ByteArray(64); url = config.url; invalidated = true }
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
+        assertTrue(locked.error!!.contains("no longer valid"))
+        assertEquals(false, locked.fingerprint)
+        assertNull(keyStore.key, "deleted")
+    }
+
+    /**
+     * The key of another vault, e.g. after the vault was reset and created again, is deleted.
+     */
+    @Test
+    fun fingerprintOfAnotherVault() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore().apply { key = ByteArray(64) { 1 }; url = config.url }
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
+        assertTrue(locked.error!!.contains("created again"), locked.error)
+        assertNull(keyStore.key, "deleted")
+    }
+
+    /**
+     * A new vault is only on the server after its first save, and only then has a key to keep.
+     */
+    @Test
+    fun fingerprintOfferedAfterFirstSave() {
+        val vm = fingerprintViewModel(FakeOtpKeyStore(), FakeAuthenticator())
+        vm.create("backup")
+        assertEquals(false, (vm.state.value as OtpState.Unlocked).offerFingerprint)
+        assertTrue(runBlocking { vm.save(account("A")).await() })
+        assertTrue(vm.awaitIdle().offerFingerprint)
+        vm.dismissFingerprintOffer()
+        assertEquals(false, (vm.state.value as OtpState.Unlocked).offerFingerprint)
+        assertTrue(runBlocking { vm.save(account("B")).await() })
+        assertEquals(false, vm.awaitIdle().offerFingerprint, "not again in this session")
+    }
+
+    /**
+     * A key is only used for its own server: with another URL it would sign requests for a server that doesn't have
+     * its vault, and could be deleted because that server has another one.
+     */
+    @Test
+    fun fingerprintOfAnotherServer() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore().apply { key = ByteArray(64) { 1 }; url = "https://other.example.com" }
+        val authenticator = FakeAuthenticator()
+        val vm = fingerprintViewModel(keyStore, authenticator)
+        vm.open(config)
+        val locked = vm.await<OtpState.Locked>()
+        assertEquals(false, locked.fingerprint)
+        vm.unlockWithFingerprint()
+        assertEquals(0, authenticator.count, "never prompted")
+        assertNotNull(keyStore.key, "kept")
+
+        // unlocking with the password offers a key for this server, which replaces the other one
+        vm.unlock("backup")
+        assertTrue(vm.await<OtpState.Unlocked>().offerFingerprint)
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        assertEquals(config.url, keyStore.url)
+    }
+
+    @Test
+    fun savesUrlThatWorked() {
+        existingVault()
+        platform.savedUrls.clear()
+        val vm = newViewModel()
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        // the fake platform's configuration has the same URL: nothing to save
+        assertTrue(platform.savedUrls.isEmpty())
+
+        platform.config = platform.config.copy(url = "https://old.example.com")
+        vm.lock()
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        assertEquals(listOf(server.url), platform.savedUrls)
+    }
+
+    @Test
+    fun forgetFingerprint() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val authenticator = FakeAuthenticator().apply { cancel = true }
+        keyStore.key = ByteArray(64)
+        keyStore.url = config.url
+        val vm = fingerprintViewModel(keyStore, authenticator)
+        vm.open(config)
+        assertTrue(vm.await { it is OtpState.Locked && authenticator.count == 1 }.let { (it as OtpState.Locked).fingerprint })
+        vm.forgetFingerprint()
+        assertEquals(false, (vm.state.value as OtpState.Locked).fingerprint)
+        assertNull(keyStore.key)
+    }
+
     @Test
     fun lockNowWhileClosedDoesNothing() {
         val vm = newViewModel()
