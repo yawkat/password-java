@@ -12,7 +12,7 @@ import org.jetbrains.annotations.Nullable;
  * {@link VaultClient#exportKey()}. The Android app keeps the exported key of the 2FA vault in the Keystore, so that a
  * fingerprint opens the vault without its password.
  *
- * <p>Not thread safe on its own; the client serializes the calls.
+ * <p>Thread safe, so that several clients can share one.
  *
  * @author yawkat
  */
@@ -58,7 +58,7 @@ public final class VaultKey {
      * @throws WrongPasswordException if this is an exported key of another install salt, e.g. because the vault on
      * the server was reset and created again
      */
-    KeyMaterial keysFor(byte[] installSalt) throws WrongPasswordException {
+    synchronized KeyMaterial keysFor(byte[] installSalt) throws WrongPasswordException {
         for (KeyMaterial derived : keys) {
             if (derived.hasInstallSalt(installSalt)) {
                 return derived;
@@ -82,20 +82,10 @@ public final class VaultKey {
     }
 
     /**
-     * @return Keys for a vault that doesn't exist yet, with a new install salt
+     * @return Keys for a vault that doesn't exist yet, with a new install salt. Only for a key that
+     * {@link #mayRegister}.
      */
     KeyMaterial keysForNewVault() throws WrongPasswordException {
-        if (!mayRegister()) {
-            throw new IllegalStateException("An exported key can't create a vault");
-        }
         return keysFor(HashUtil.generateRandomBytes(AuthProtocol.SALT_LENGTH));
-    }
-
-    /**
-     * @return The password, for decrypting a legacy blob, or {@code null} for an exported key
-     */
-    @Nullable
-    byte[] getPassword() {
-        return password;
     }
 }

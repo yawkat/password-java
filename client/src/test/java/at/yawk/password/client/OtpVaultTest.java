@@ -164,15 +164,61 @@ public class OtpVaultTest {
         Assert.expectThrows(WrongPasswordException.class, () -> OtpStore.open(VaultClient.otp(
                 this.server.getUrl(), new MemoryStorageProvider(), VaultKey.ofExportedKey(exported))));
 
-        // with one, it opens, but saving doesn't register
+        // with one, it opens, but saving doesn't register: the change only reaches the local copy
         VaultClient<OtpBlob> client = VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported));
         OtpStore store = OtpStore.open(client);
         Assert.assertNotNull(store);
-        Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.NOT_ON_SERVER);
+        Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.VAULT_RESET);
         Assert.assertEquals(issuers(store), List.of("A"));
         Assert.expectThrows(WrongPasswordException.class, () -> store.add(account("B")));
-        Assert.assertEquals(issuers(store), List.of("A"));
         Assert.assertNull(server.getInstallSalt());
+        OtpStore reopened = OtpStore.open(
+                VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported)));
+        Assert.assertNotNull(reopened);
+        Assert.assertEquals(issuers(reopened), List.of("A", "B"));
+    }
+
+    /**
+     * A vault created again after a reset, from a device with a local copy, gets a new install salt: the exported keys
+     * of the old vault (e.g. of a lost device) don't open it.
+     */
+    @Test
+    public void resetVaultGetsNewKeys() throws Exception {
+        LocalStorageProvider storage = new MemoryStorageProvider();
+        byte[] exported;
+        byte[] oldSalt;
+        try (TestServer old = TestServer.start()) {
+            VaultClient<OtpBlob> client = VaultClient.otp(old.getUrl(), storage, VaultKey.ofPassword(BACKUP_PASSWORD));
+            create(client).add(account("A"));
+            exported = client.exportKey();
+            oldSalt = new DatabaseClient(old.getUrl(), AuthProtocol.TOTP_VAULT_PREFIX).getInstallSalt();
+        }
+
+        // the content of the local copy is kept
+        OtpStore recreated = OtpStore.open(withPassword(storage));
+        Assert.assertNotNull(recreated);
+        Assert.assertEquals(recreated.getLocalReason(), ClientValue.LocalReason.NOT_ON_SERVER);
+        recreated.add(account("B"));
+        byte[] newSalt = new DatabaseClient(server.getUrl(), AuthProtocol.TOTP_VAULT_PREFIX).getInstallSalt();
+        Assert.assertNotNull(newSalt);
+        Assert.assertNotEquals(newSalt, oldSalt);
+        OtpStore reopened = OtpStore.open(withPassword(new MemoryStorageProvider()));
+        Assert.assertNotNull(reopened);
+        Assert.assertEquals(issuers(reopened), List.of("A", "B"));
+
+        Assert.expectThrows(WrongPasswordException.class, () -> OtpStore.open(VaultClient.otp(
+                server.getUrl(), new MemoryStorageProvider(), VaultKey.ofExportedKey(exported))));
+    }
+
+    /**
+     * After a failed load, nothing is saved with the state of an earlier one.
+     */
+    @Test
+    public void noSaveAfterFailedLoad() throws Exception {
+        VaultClient<OtpBlob> client = VaultClient.otp(server.getUrl(), new MemoryStorageProvider(),
+                                                      VaultKey.ofExportedKey(new byte[VaultKey.EXPORTED_LENGTH]));
+        Assert.expectThrows(WrongPasswordException.class, client::load);
+        Assert.expectThrows(IllegalStateException.class, () -> client.save(new OtpBlob()));
     }
 
     /**
@@ -192,6 +238,19 @@ public class OtpVaultTest {
                 VaultClient.otp("http://127.0.0.1:1", storage, VaultKey.ofPassword(BACKUP_PASSWORD));
         Assert.assertNotNull(OtpStore.open(offline));
         Assert.expectThrows(IllegalStateException.class, offline::exportKey);
+
+        // The server knows another vault (created again elsewhere, with another password), which refuses our keys: the
+        // local copy is used, and nothing is exported.
+        try (TestServer other = TestServer.start()) {
+            create(VaultClient.otp(other.getUrl(), new MemoryStorageProvider(),
+                                   VaultKey.ofPassword("other".getBytes(StandardCharsets.UTF_8)))).add(account("X"));
+            VaultClient<OtpBlob> refused =
+                    VaultClient.otp(other.getUrl(), storage, VaultKey.ofPassword(BACKUP_PASSWORD));
+            OtpStore local = OtpStore.open(refused);
+            Assert.assertNotNull(local);
+            Assert.assertEquals(local.getLocalReason(), ClientValue.LocalReason.SERVER_UNAVAILABLE);
+            Assert.expectThrows(IllegalStateException.class, refused::exportKey);
+        }
     }
 
     /**

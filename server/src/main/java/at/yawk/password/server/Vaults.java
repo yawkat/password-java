@@ -6,6 +6,7 @@ import io.micronaut.context.annotation.Property;
 import jakarta.inject.Inject;
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
@@ -28,18 +29,31 @@ public class Vaults {
 
     final DatabaseState passwords;
     final DatabaseState totp;
+    /**
+     * The vaults by path prefix. Every path of the API is {@code <prefix>/<route>}, with an optional trailing slash.
+     */
+    private final Map<String, DatabaseState> byPrefix;
 
     @Inject
     Vaults(@Property(name = DATA_DIR_PROPERTY, defaultValue = ".") String dataDirectory) throws IOException {
         passwords = new DatabaseState(dataDirectory);
-        totp = new DatabaseState(new File(dataDirectory, "totp"), false);
+        // absolute: the `latest` link of a vault in a relative directory would point to the wrong place (see #27)
+        totp = new DatabaseState(new File(dataDirectory, "totp").getAbsoluteFile(), null);
+        byPrefix = Map.of("", passwords, AuthProtocol.TOTP_VAULT_PREFIX, totp);
     }
 
     /**
-     * @return The vault that a request path belongs to
+     * @return The vault that a request path of the API ({@code /db}, {@code /totp/db/}, ...) belongs to
+     * @throws IllegalArgumentException if the path belongs to no vault. Only the routes of the API call this.
      */
     DatabaseState forPath(String path) {
-        return path.startsWith(AuthProtocol.TOTP_VAULT_PREFIX + "/") ? totp : passwords;
+        String trimmed = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
+        int lastSlash = trimmed.lastIndexOf('/');
+        DatabaseState state = lastSlash < 0 ? null : byPrefix.get(trimmed.substring(0, lastSlash));
+        if (state == null) {
+            throw new IllegalArgumentException("No vault for " + path);
+        }
+        return state;
     }
 
     /**

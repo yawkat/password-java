@@ -114,10 +114,15 @@ compromising the device. And every device you type the master password into can 
 device you trust, in a private window.
 
 To reset a server, stop it and delete `verifier` and `latest` from the data directory. The next client that saves
-registers it again. This is also the only way to change the master password: the client that registers with the new
-password starts with an empty database (or with its local copy, if that is in the new format and it can decrypt it).
-The old timestamped files stay in place, encrypted under the old password. The 2FA vault is reset the same way, with
-`totp/verifier` and `totp/latest`, independently of the password vault.
+registers it again, with a new install salt. A client with the same password and a local copy uploads the content of
+its local copy. This is also the only way to change the master password: register with the new password from a device
+without a local copy (or delete the local copy first), which starts with an empty database. A device with a local copy
+rejects the new password, since it can't decrypt that copy. The old timestamped files stay in place, encrypted under
+the old password.
+
+The 2FA vault is reset the same way, with `totp/verifier` and `totp/latest`, independently of the password vault.
+This also locks out the devices that open it with a fingerprint, e.g. a lost phone: they need the vault's password
+again.
 
 ### Migrating from the old protocol
 

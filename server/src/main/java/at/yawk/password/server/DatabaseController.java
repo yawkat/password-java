@@ -1,5 +1,6 @@
 package at.yawk.password.server;
 
+import at.yawk.password.AuthProtocol;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
@@ -39,7 +40,7 @@ class DatabaseController {
     /**
      * Returns the version and install salt, or 404 if the vault is not registered yet.
      */
-    @Get(uris = { "/salt", "/totp/salt" }, produces = MediaType.APPLICATION_OCTET_STREAM)
+    @Get(uris = { "/salt", AuthProtocol.TOTP_VAULT_PREFIX + "/salt" }, produces = MediaType.APPLICATION_OCTET_STREAM)
     HttpResponse<byte[]> salt(HttpRequest<?> request) {
         byte[] salt = vaults.forPath(request.getPath()).getSaltResponse();
         return salt == null ? HttpResponse.notFound() : HttpResponse.ok(salt);
@@ -49,7 +50,7 @@ class DatabaseController {
      * Registers the install salt and public key. Returns 403 if the vault is registered already, 400 if the
      * registration is malformed.
      */
-    @Put(uris = { "/register", "/totp/register" }, consumes = MediaType.ALL)
+    @Put(uris = { "/register", AuthProtocol.TOTP_VAULT_PREFIX + "/register" }, consumes = MediaType.ALL)
     @UnregisteredFilter.Required
     HttpResponse<?> register(HttpRequest<?> request, @Nullable @Body byte[] registration) throws IOException {
         DatabaseState state = vaults.forPath(request.getPath());
@@ -65,7 +66,7 @@ class DatabaseController {
      * Returns the database, 401/403/429 if the request is rejected (see {@link SignatureFilter}), or 404 if no
      * database of this registration has been saved yet.
      */
-    @Get(uris = { "/db", "/totp/db" }, produces = MediaType.APPLICATION_OCTET_STREAM)
+    @Get(uris = { "/db", AuthProtocol.TOTP_VAULT_PREFIX + "/db" }, produces = MediaType.APPLICATION_OCTET_STREAM)
     @SignatureFilter.Required
     @SuppressWarnings("unchecked")
     HttpResponse<byte[]> getDatabase(HttpRequest<?> request) throws IOException {
@@ -82,7 +83,7 @@ class DatabaseController {
      * Saves the database. Returns 401/403/429 if the request is rejected (see {@link SignatureFilter}), 400 if the body
      * is not a database of this registration.
      */
-    @Put(uris = { "/db", "/totp/db" }, consumes = MediaType.ALL)
+    @Put(uris = { "/db", AuthProtocol.TOTP_VAULT_PREFIX + "/db" }, consumes = MediaType.ALL)
     @SignatureFilter.Required
     HttpResponse<?> putDatabase(HttpRequest<?> request, @Nullable @Body byte[] db) throws IOException {
         DatabaseState state = vaults.forPath(request.getPath());

@@ -1,5 +1,6 @@
 package at.yawk.password.server;
 
+import at.yawk.password.AuthProtocol;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
@@ -18,7 +19,9 @@ import java.lang.annotation.Target;
  *
  * @author yawkat
  */
-@ServerFilter(patterns = { "/register", "/register/", "/totp/register", "/totp/register/" })
+@ServerFilter(patterns = {
+        "/register", "/register/", AuthProtocol.TOTP_VAULT_PREFIX + "/register", AuthProtocol.TOTP_VAULT_PREFIX + "/register/"
+})
 @UnregisteredFilter.Required
 class UnregisteredFilter extends RouteAnnotationFilter {
     private final Vaults vaults;

@@ -400,6 +400,7 @@ class PasswordViewModel(
             ClientValue.LocalReason.SERVER_COPY_OLDER ->
                 "Server copy is older than the local copy (a failed upload, or a rollback), loaded local copy"
             ClientValue.LocalReason.NOT_ON_SERVER -> "Server has no database, loaded local copy. Saving uploads it"
+            ClientValue.LocalReason.VAULT_RESET -> "The database was reset on the server, loaded local copy"
         }
 
         fun saveErrorText(message: String) =

@@ -10,7 +10,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
@@ -56,15 +55,12 @@ public class DatabaseState {
      */
     private static final byte[] ED25519_X509_PREFIX = HexFormat.of().parseHex("302a300506032b6570032100");
 
-    private static final Set<PosixFilePermission> OWNER_ONLY_DIRECTORY = PosixFilePermissions.fromString("rwx------");
-
     private static final Logger log = LoggerFactory.getLogger(DatabaseState.class);
 
     private final LocalStorageProvider databaseStorageProvider;
     private final FileLocalStorageProvider registrationStorageProvider;
     @Nullable private final File legacySharedSecret;
     private final File directory;
-    private final boolean createDirectoryOnRegistration;
     private final NonceMemory nonces = new NonceMemory(MAX_REMEMBERED_NONCES, MAX_REQUEST_AGE_MILLIS);
     /**
      * The registration file, which never changes once written. The operator resets a server while it is stopped.
@@ -82,17 +78,21 @@ public class DatabaseState {
      * The password vault, in the data directory itself.
      */
     DatabaseState(String dataDirectory) throws IOException {
-        this(new File(dataDirectory), true);
+        this(new File(dataDirectory), new File(dataDirectory, "shared-secret"));
     }
 
     /**
-     * @param passwordVault Whether this is the password vault, in the data directory, which may hold the shared secret
-     * of the old protocol (deleted on registration). Another vault lives in a subdirectory, which is created on
-     * registration.
+     * @param dir The vault's directory. If it doesn't exist yet, it is created (owner-only) on registration.
+     * @param legacySharedSecret The shared secret of the old protocol, which only the password vault can have. It is
+     * deleted on registration.
+     * @throws IOException if the directory exists, but is not a directory that the server can read and write
      */
-    DatabaseState(File dir, boolean passwordVault) throws IOException {
+    DatabaseState(File dir, @Nullable File legacySharedSecret) throws IOException {
         this.directory = dir;
-        this.createDirectoryOnRegistration = !passwordVault;
+        this.legacySharedSecret = legacySharedSecret;
+        if (dir.exists() && !(dir.isDirectory() && dir.canRead() && dir.canWrite() && dir.canExecute())) {
+            throw new IOException(dir + " is not a directory that the server can read and write");
+        }
         warnIfAccessibleByOthers(dir.toPath());
 
         registrationStorageProvider = new FileLocalStorageProvider(new File(dir, "verifier"));
@@ -108,7 +108,6 @@ public class DatabaseState {
         }
         databaseStorageProvider = new MultiFileLocalStorageProvider(dir);
 
-        legacySharedSecret = passwordVault ? new File(dir, "shared-secret") : null;
         if (legacySharedSecret != null && legacySharedSecret.exists() && registration == null) {
             log.warn("Found the shared secret of the old protocol but no registration. Migrate by unlocking with the " +
                      "new client, see the README; the old secret is deleted on registration.");
@@ -156,13 +155,8 @@ public class DatabaseState {
         if (isRegistered()) {
             return false;
         }
-        if (createDirectoryOnRegistration && !directory.isDirectory()) {
-            // owner-only, like the files in it
-            Path path = directory.toPath().toAbsolutePath();
-            FileAttribute<?>[] ownerOnly = PlatformDependent.isPosix(path.getParent()) ?
-                    new FileAttribute<?>[]{ PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY) } :
-                    new FileAttribute<?>[0];
-            Files.createDirectory(path, ownerOnly);
+        if (!directory.isDirectory()) {
+            PlatformDependent.createOwnerOnlyDirectory(directory.toPath());
         }
         registrationStorageProvider.save(registration);
         this.registration = registration.clone();

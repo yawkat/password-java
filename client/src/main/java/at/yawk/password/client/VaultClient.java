@@ -4,7 +4,6 @@ import at.yawk.password.AuthProtocol;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.OtpBlob;
-import at.yawk.password.model.PasswordBlob;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -20,7 +19,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>Not thread safe on its own; {@link PasswordStore} and {@link OtpStore} serialize the calls.
  *
- * @param <T> The data of the vault, {@link PasswordBlob} or {@link OtpBlob}
+ * @param <T> The data of the vault, {@link at.yawk.password.model.PasswordBlob} or {@link OtpBlob}
  * @author yawkat
  */
 @Slf4j
@@ -47,6 +46,15 @@ public class VaultClient<T> {
      * Otherwise they are those of the local copy, assumed to be the server's.
      */
     private boolean keysFromServer;
+    /**
+     * Whether the server accepted {@link #keys} since the last {@link #load}: their signature on a request for the
+     * database, or the registration. Only such keys are exported.
+     */
+    private boolean keysAccepted;
+    /**
+     * Whether the last {@link #load} succeeded. A failed load leaves nothing to save with, since what an earlier load
+     * found may not be the server's state anymore.
+     */
     private boolean loaded;
     /**
      * {@code false} if the last {@link #load} found the server without registration, so that {@link #save} registers
@@ -54,6 +62,11 @@ public class VaultClient<T> {
      * URL was entered.
      */
     private boolean registered = true;
+    /**
+     * The new keys to register, while the server has no registration: kept, so that loading again doesn't derive
+     * another set.
+     */
+    @Nullable private KeyMaterial keysToRegister;
     /**
      * Revision of the database that was loaded or saved last.
      */
@@ -78,38 +91,50 @@ public class VaultClient<T> {
         return new VaultClient<>(url, AuthProtocol.TOTP_VAULT_PREFIX, localStorage, key, OtpBlob.class);
     }
 
-    DatabaseClient getDatabaseClient() {
-        return databaseClient;
-    }
-
     public ClientValue<T> load() throws Exception {
+        loaded = false;
+        keysAccepted = false;
         byte[] local = localStorage.load();
 
         byte[] remote;
+        ClientValue.LocalReason reasonWithoutRemote = ClientValue.LocalReason.NOT_ON_SERVER;
         try {
             byte[] installSalt = databaseClient.getInstallSalt();
             if (installSalt == null) {
-                registered = false;
-                // the keys of the local copy, or new ones for a new database
-                byte[] localSalt = local == null ? null : BlobCodec.installSalt(local);
-                if (localSalt != null) {
-                    keys = keysFor(localSalt);
-                } else if (!key.mayRegister()) {
-                    throw new WrongPasswordException(RESET_MESSAGE);
-                } else if (keys == null || !keysFromServer) {
-                    keys = key.keysForNewVault();
+                if (key.mayRegister()) {
+                    // A new registration always gets a new install salt, also when it uploads the content of a local
+                    // copy. A vault that was reset (e.g. to change its password, or to lock out the exported key of a
+                    // lost device) must not come back with its old keys.
+                    if (keysToRegister == null) {
+                        keysToRegister = key.keysForNewVault();
+                    }
+                    keys = keysToRegister;
+                } else {
+                    // An exported key belongs to a registration that is gone: the vault was reset. It reads (and
+                    // saves to) a local copy of its registration, but never registers, see save.
+                    if (local == null) {
+                        throw new WrongPasswordException(RESET_MESSAGE);
+                    }
+                    byte[] localSalt = BlobCodec.installSalt(local);
+                    keys = localSalt == null ? null : keysFor(localSalt);
+                    reasonWithoutRemote = ClientValue.LocalReason.VAULT_RESET;
                 }
+                registered = false;
                 keysFromServer = true;
                 remote = null;
             } else {
+                // fails for an exported key of another registration, before anything changes
+                KeyMaterial serverKeys = keysFor(installSalt);
+                keys = serverKeys;
+                keysToRegister = null;
                 registered = true;
-                keys = keysFor(installSalt);
                 keysFromServer = true;
                 try {
-                    remote = databaseClient.getDatabase(keys);
+                    remote = databaseClient.getDatabase(serverKeys);
                 } catch (FileNotFoundException e) {
                     remote = null;
                 }
+                keysAccepted = true;
             }
         } catch (IOException e) {
             log.info("Could not get db from remote, trying local", e);
@@ -131,9 +156,9 @@ public class VaultClient<T> {
             if (local == null) {
                 loaded = true;
                 revision = 0;
-                return new ClientValue<>(null, ClientValue.LocalReason.NOT_ON_SERVER);
+                return new ClientValue<>(null, reasonWithoutRemote);
             }
-            return loaded(decryptLocal(local), ClientValue.LocalReason.NOT_ON_SERVER);
+            return loaded(decryptLocal(local), reasonWithoutRemote);
         }
 
         DecryptedBlob<T> remoteBlob;
@@ -182,18 +207,26 @@ public class VaultClient<T> {
         return new ClientValue<>(blob.getData(), reason);
     }
 
-    @SuppressWarnings("unchecked")
     private DecryptedBlob<T> decryptLocal(byte[] local) throws Exception {
         byte[] localSalt = BlobCodec.installSalt(local);
         if (localSalt != null) {
             return BlobCodec.decrypt(objectMapper, keysFor(localSalt), local, dataClass);
-        } else if (dataClass == PasswordBlob.class && key.getPassword() != null && LegacyBlob.isLegacy(local)) {
-            // only the password vault existed in the old format
-            log.info("Local copy is in the legacy format, it will be migrated on the next save");
-            return (DecryptedBlob<T>) LegacyBlob.decrypt(objectMapper, key.getPassword(), local);
-        } else {
+        }
+        DecryptedBlob<T> legacy = decryptLegacy(local);
+        if (legacy == null) {
             throw new Exception("Invalid database: unknown format");
         }
+        return legacy;
+    }
+
+    /**
+     * Decrypt a local copy in the format of the old protocol.
+     *
+     * @return {@code null} if this vault has no old format, or the blob is not in it
+     */
+    @Nullable
+    DecryptedBlob<T> decryptLegacy(byte[] local) throws Exception {
+        return null;
     }
 
     private KeyMaterial keysFor(byte[] installSalt) throws WrongPasswordException {
@@ -204,19 +237,18 @@ public class VaultClient<T> {
      * Save the database locally, then upload it. Registers the server first if {@link #load} found it without
      * registration.
      *
-     * @throws IllegalStateException if nothing was loaded yet
+     * @throws IllegalStateException if nothing was loaded yet, or the last load failed
+     * @throws WrongPasswordException if the vault was reset on the server and this client has an exported key, which
+     * can't register it again (see {@link ClientValue.LocalReason#VAULT_RESET}). The local copy is saved anyway.
      */
     public void save(T blob) throws Exception {
         if (!loaded) {
-            throw new IllegalStateException("Load the database before saving");
+            throw new IllegalStateException("Load the database before saving (the last load failed)");
         }
         KeyMaterial keys = this.keys;
         if (keys == null) {
             throw new IOException("The server was unreachable, and the local copy is in the old format. Reload once " +
                                   "the server is reachable, then save to migrate it.");
-        }
-        if (!registered && !key.mayRegister()) {
-            throw new WrongPasswordException(RESET_MESSAGE);
         }
         DecryptedBlob<T> decrypted = new DecryptedBlob<>();
         decrypted.setData(blob);
@@ -226,10 +258,15 @@ public class VaultClient<T> {
         revision = decrypted.getRevision();
 
         if (!registered) {
+            if (!key.mayRegister()) {
+                throw new WrongPasswordException(RESET_MESSAGE);
+            }
             databaseClient.register(keys);
             registered = true;
+            keysToRegister = null;
         }
         databaseClient.putDatabase(keys, encrypted);
+        keysAccepted = true;
     }
 
     /**
@@ -237,13 +274,13 @@ public class VaultClient<T> {
      * opens this vault like the password does, so keep it as safe as the data.
      *
      * @return {@link VaultKey#EXPORTED_LENGTH} bytes, to be wiped by the caller
-     * @throws IllegalStateException unless the last load or save used the keys of the server's registration: an
-     * export before the first save of a new vault, or while the server is unreachable, could give a key that the server
+     * @throws IllegalStateException unless the server accepted the keys since the last load: an export before the first
+     * save of a new vault, or while the server is unreachable or refuses the keys, could give a key that the server
      * never accepts
      */
     public byte[] exportKey() {
         KeyMaterial keys = this.keys;
-        if (!loaded || keys == null || !registered || !keysFromServer) {
+        if (!keysAccepted || keys == null) {
             throw new IllegalStateException("No keys of the server's vault to export, load or save it first");
         }
         byte[] rootKey = keys.getRootKey();

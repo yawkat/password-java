@@ -180,4 +180,40 @@ public class DatabaseStateTest {
         }
         Assert.assertFalse(vaults.passwords.isRegistered());
     }
+
+    /**
+     * With a relative data directory such as the default ".", the 2FA vault's `latest` link must still point to the
+     * database.
+     */
+    @Test
+    public void testTotpWithRelativeDataDirectory() throws Exception {
+        Path relative = Path.of("").toAbsolutePath().relativize(dir.toAbsolutePath());
+        Vaults vaults = new Vaults(relative.toString());
+        ServerAuth auth = new ServerAuth();
+        Assert.assertTrue(vaults.totp.registerIfUnregistered(auth.registration()));
+        byte[] db = auth.database(100);
+        vaults.totp.saveDatabase(db);
+        Assert.assertEquals(vaults.totp.loadDatabase(), db);
+    }
+
+    @Test
+    public void testUnusableTotpDirectoryFailsStartup() throws Exception {
+        Files.write(dir.resolve("totp"), new byte[0]);
+        Assert.assertThrows(java.io.IOException.class, () -> new Vaults(dir.toString()));
+    }
+
+    @Test
+    public void testForPath() throws Exception {
+        Vaults vaults = new Vaults(dir.toString());
+        for (String path : new String[]{ "/salt", "/register/", "/db", "/db/" }) {
+            Assert.assertSame(vaults.forPath(path), vaults.passwords, path);
+        }
+        for (String path : new String[]{ "/totp/salt", "/totp/register/", "/totp/db", "/totp/db/" }) {
+            Assert.assertSame(vaults.forPath(path), vaults.totp, path);
+        }
+        // no default: a path of another (future) vault never falls back to the password vault
+        for (String path : new String[]{ "/other/db", "/totp/x/db", "db", "" }) {
+            Assert.assertThrows(IllegalArgumentException.class, () -> vaults.forPath(path));
+        }
+    }
 }

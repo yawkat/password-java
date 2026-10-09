@@ -29,6 +29,8 @@ public class PlatformDependent {
 
     private static final Set<PosixFilePermission> OWNER_ONLY = EnumSet.of(
             PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+    private static final Set<PosixFilePermission> OWNER_ONLY_DIRECTORY = EnumSet.of(
+            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
 
     public static boolean isPosix(Path path) {
         return path.getFileSystem().supportedFileAttributeViews().contains("posix");
@@ -68,6 +70,19 @@ public class PlatformDependent {
         Path path = file.toPath();
         if (isPosix(path)) {
             Files.setPosixFilePermissions(path, OWNER_ONLY);
+        }
+    }
+
+    /**
+     * Create a directory (not its parents) with owner-only permissions ({@code rwx------}) from the start, where the
+     * file system supports POSIX permissions.
+     */
+    public static void createOwnerOnlyDirectory(Path path) throws IOException {
+        Path absolute = path.toAbsolutePath();
+        if (isPosix(absolute.getParent())) {
+            Files.createDirectory(absolute, PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY));
+        } else {
+            Files.createDirectory(absolute);
         }
     }
 

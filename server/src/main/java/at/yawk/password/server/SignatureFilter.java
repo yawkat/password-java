@@ -25,7 +25,9 @@ import java.time.format.DateTimeFormatter;
  *
  * @author yawkat
  */
-@ServerFilter(patterns = { "/db", "/db/", "/totp/db", "/totp/db/" })
+@ServerFilter(patterns = {
+        "/db", "/db/", AuthProtocol.TOTP_VAULT_PREFIX + "/db", AuthProtocol.TOTP_VAULT_PREFIX + "/db/"
+})
 @SignatureFilter.Required
 class SignatureFilter extends RouteAnnotationFilter {
     private static final String HEADER_ATTRIBUTE = SignatureFilter.class.getName() + ".header";

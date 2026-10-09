@@ -1,9 +1,9 @@
 # Specification
 
 This describes the protocol between client and server and the format of the stored database, as implemented in
-`shared` (`AuthProtocol`, `Base32`), `client` (`VaultClient`, `PasswordClient`, `VaultKey`, `DatabaseClient`,
-`KeyMaterial`, `BlobCodec`, `LegacyBlob`, `otp/*`, `model/*`) and `server` (`DatabaseController`, `Vaults`,
-`DatabaseState`, `SignatureFilter`, `UnregisteredFilter`, `WebHeadersFilter`).
+`shared` (`AuthProtocol`, `Base32`), `client` (`VaultClient`, `PasswordClient`, `VaultKey`, `VaultStore`,
+`DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`, `otp/*`, `model/*`) and `server` (`DatabaseController`,
+`Vaults`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`, `WebHeadersFilter`).
 
 The server stores one opaque blob per vault and never sees a password or the plaintext. There are two vaults: the
 password vault, opened with the master password, and the [2FA vault](#2fa-vault), opened with its own password. Both
@@ -278,15 +278,18 @@ files plus `latest`). Keys are derived once per install salt and kept in memory 
 ### Load
 
 1. `GET /salt`.
-   - 404: the server is not registered. Use the local copy if there is one (a legacy local copy is decrypted with
-     the password and gets a new install salt), marked "not on server"; otherwise there is no database yet, and the
-     apps ask the user to repeat the master password (`ConfirmCreate`) before creating an empty one. **Loading never
-     registers**: that only happens on the first save, so entering a URL does not claim a server.
+   - 404: the server is not registered. Use the local copy if there is one, marked "not on server"; otherwise there
+     is no database yet, and the apps ask the user to repeat the master password (`ConfirmCreate`) before creating an
+     empty one. **Loading never registers**: that only happens on the first save, so entering a URL does not claim a
+     server. The registration always gets a **new install salt**, also when the content comes from a local copy of an
+     earlier registration, so a vault that was reset never comes back with its old keys (see [Exported
+     keys](#exported-keys)). The local copy is still decrypted with the keys of its own install salt, so a password
+     that doesn't decrypt it is rejected as wrong.
    - Otherwise derive the keys for the install salt and `GET /db`. A 404 there means that no database was saved
      yet: use the local copy if there is one, marked "not on server", or else there is no database yet, as above.
      The next save uploads without registering.
 2. If a request fails (network error, 403, 429, ...), use the local copy, marked "server unavailable"; without a
-   local copy the error is raised. A wrong password gets 403 from the server and then fails to decrypt the local copy,
+   local copy the error is raised. A failed load leaves nothing to save: the client must load successfully first. A wrong password gets 403 from the server and then fails to decrypt the local copy,
    so it is reported as a wrong password. Saves keep using the server's install salt if it is known, else that of the
    local copy. A legacy local copy has none, so it can't be saved until the server is reachable.
 3. Otherwise decrypt the remote blob.
@@ -313,9 +316,13 @@ for confirmation before the first save in that state.
 ### Exported keys
 
 Instead of the password, a client can open a vault with an exported key: `install_salt ‖ root` (64 bytes), taken
-from a client that was unlocked with the password. It opens and saves the vault without the Argon2id run, but only
-for that install salt: for another one (e.g. after the vault on the server was reset and created again) it fails like
-a wrong password. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
+from a client that was unlocked with the password, and only once the server has accepted its keys (a signed request
+for the database, or the registration). It opens and saves the vault without the Argon2id run, but only for that
+install salt: for another one (e.g. after the vault on the server was reset and created again, which always gives a
+new install salt) it fails like a wrong password. An exported key never registers: if the server has no registration,
+the vault was reset. Then the client opens a local copy of its own install salt, marked "vault reset"; a save only
+reaches the local copy and then fails, until the vault is unlocked with its password. So resetting the 2FA vault
+locks out the exported keys of all devices, e.g. that of a lost phone. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
 fingerprint, so that a fingerprint opens the 2FA vault. The exported key opens the vault as the password does, so it
 is kept as safe as the data.
 
