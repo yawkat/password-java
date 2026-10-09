@@ -155,3 +155,51 @@ pre {
     overflow-wrap: anywhere;
     font-size: 0.9rem;
 }
+
+.vault-choice {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.vault-choice label {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    cursor: pointer;
+}
+
+.vault-choice input {
+    padding: 0;
+}
+
+.otp-summary {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* flex drops the disclosure triangle of <summary> */
+.otp-summary::before {
+    content: "▸";
+    color: var(--muted);
+}
+
+details[open] > .otp-summary::before {
+    content: "▾";
+}
+
+.summary-code {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.otp-code {
+    font-size: 1.5rem;
+    color: var(--accent);
+}
+
+.countdown {
+    color: var(--muted);
+    font-size: 0.9rem;
+    min-width: 2.5em;
+}

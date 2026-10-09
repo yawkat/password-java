@@ -61,7 +61,10 @@ public class WebClientTest {
 
     @Test
     public void assets() {
-        Assert.assertTrue(getServed("/app.js", "application/javascript").contains("argon2id"));
+        String app = getServed("/app.js", "application/javascript");
+        Assert.assertTrue(app.contains("argon2id"));
+        // the 2FA vault, below totp/
+        Assert.assertTrue(app.contains("\"totp/\""));
         Assert.assertFalse(getServed("/app.css", "text/css").isEmpty());
         // copied from the webjar by the build
         Assert.assertTrue(getServed("/argon2.js", "application/javascript").contains("argon2id"));
