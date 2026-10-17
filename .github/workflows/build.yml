@@ -34,6 +34,8 @@ jobs:
   # methods that only newer Android versions have, which only fails at runtime.
   api29:
     runs-on: ubuntu-latest
+    # A run takes about 6 minutes; don't let an emulator that doesn't shut down hold the runner for 6 hours.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -57,33 +59,15 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Cache AVD
-        uses: actions/cache@v5
-        id: avd-cache
-        with:
-          path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-29-x86_64
-
-      - name: Create AVD and snapshot
-        if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 29
-          arch: x86_64
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: false
-          script: echo "Generated AVD snapshot for caching."
-
+      # A fresh, cold-booted AVD every time: with the AVD and its boot snapshot restored from actions/cache, the
+      # emulator never exits after the tests (in android-emulator-runner's "Terminate Emulator"), so every run
+      # with a cache hit hung until the job was cancelled after 6 hours.
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
           arch: x86_64
-          force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: ./gradlew :android:connectedDebugAndroidTest
 
