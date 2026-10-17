@@ -220,14 +220,14 @@
    "module": "sha256-bj08jSo3U5PWQ5WIKsgMnDpE6QAIgBo0/ZmhPLzJa/0=",
    "pom": "sha256-Rta8ERO77oHS2fef2vR8KEHiWeqNWUJ1YHNJMY4LxoU="
   },
-  "org/jetbrains/kotlin#compose-compiler-gradle-plugin/2.4.20/gradle813": {
+  "org/jetbrains/kotlin#compose-compiler-gradle-plugin/2.4.20/gradle96": {
    "jar": "sha256-iqxYnvPHre0G3eZbhIBBrZEP0r/tR7BjxJ5DozUZJks="
   },
   "org/jetbrains/kotlin#fus-statistics-gradle-plugin/2.4.20": {
    "module": "sha256-z+b7GvP32gFCjvS/Tjjhx2Y39OEIrCLxXf5Mcz30CNQ=",
    "pom": "sha256-hNf44VqoBKyjrKzueQYGbj9n2YwI/QJ9Eh8QLociBtY="
   },
-  "org/jetbrains/kotlin#fus-statistics-gradle-plugin/2.4.20/gradle813": {
+  "org/jetbrains/kotlin#fus-statistics-gradle-plugin/2.4.20/gradle96": {
    "jar": "sha256-DAUIJdZWVNCsj2upQJ+6gk+HEA3wDnYwAkKr/pobmJ8="
   },
   "org/jetbrains/kotlin#kotlin-build-statistics/2.4.20": {
@@ -254,7 +254,7 @@
    "module": "sha256-S+o4mdraVBweSCJGslc2eOrt9hGvfxZ0zgoX1cPv/cA=",
    "pom": "sha256-Jyo5y/E/uBX8BQlDeIy7g7k4rqVNgagdavhhudwTomw="
   },
-  "org/jetbrains/kotlin#kotlin-gradle-plugin-api/2.4.20/gradle813": {
+  "org/jetbrains/kotlin#kotlin-gradle-plugin-api/2.4.20/gradle96": {
    "jar": "sha256-/J4Y+E8aWAVTKTL1KT7BESF2kmOzlmQfd557Z/tCUKY="
   },
   "org/jetbrains/kotlin#kotlin-gradle-plugin-idea-proto/2.4.20": {
@@ -270,8 +270,8 @@
    "module": "sha256-iojPUt5fucgpcwsPWuwfzTVjPml4ceJWIw8JkDx03UM=",
    "pom": "sha256-k026epd6F8AI2sbIZwyMhlGakc7bdZuaj3cEAAXpXcU="
   },
-  "org/jetbrains/kotlin#kotlin-gradle-plugin/2.4.20/gradle813": {
-   "jar": "sha256-6bGKwVyBtV1tM2NW+Rl6ofufk3Hg52+9KwaHHLXPRrI="
+  "org/jetbrains/kotlin#kotlin-gradle-plugin/2.4.20/gradle96": {
+   "jar": "sha256-b0lojyxnFdYPXcUtTBramSzkvtYFPRvW5XnJOS17oO0="
   },
   "org/jetbrains/kotlin#kotlin-gradle-plugins-bom/2.4.20": {
    "module": "sha256-bfp9/aYZrSSOQTzzE8MTcF2wqg28QQs6jg2SKs+oLJQ=",
