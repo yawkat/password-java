@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The credential types of PasskeyProviderService: passkeys only, the passwords are free text -->
+<credential-provider xmlns:android="http://schemas.android.com/apk/res/android">
+    <capabilities>
+        <capability name="android.credentials.TYPE_PUBLIC_KEY_CREDENTIAL" />
+    </capabilities>
+</credential-provider>

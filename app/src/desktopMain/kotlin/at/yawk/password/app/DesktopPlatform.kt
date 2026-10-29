@@ -14,8 +14,9 @@ import java.util.Properties
 
 /**
  * Desktop settings and storage, compatible with the old Qt GUI: the configuration is read from
- * `$XDG_CONFIG_HOME/password-gui/config.properties` (keys `url` and `storageDir`), and the local copy of the
- * database is kept by a [MultiFileLocalStorageProvider] in `storageDir`, by default `$XDG_DATA_HOME/password`.
+ * `$XDG_CONFIG_HOME/password-gui/config.properties` (keys `url`, `storageDir` and `securityKey`), and the local
+ * copy of the database is kept by a [MultiFileLocalStorageProvider] in `storageDir`, by default
+ * `$XDG_DATA_HOME/password`.
  */
 class DesktopPlatform(
     private val env: (String) -> String? = System::getenv,
@@ -43,6 +44,11 @@ class DesktopPlatform(
         }
         return AppConfig(url, storage.path)
     }
+
+    /**
+     * Whether to create the virtual security key (key `securityKey`), off by default: it needs access to `/dev/uhid`.
+     */
+    fun securityKeyEnabled(): Boolean = readProperties().getProperty("securityKey")?.trim() == "true"
 
     override fun saveUrl(url: String) {
         val properties = readProperties()

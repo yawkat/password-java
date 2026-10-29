@@ -1,5 +1,6 @@
 package at.yawk.password.client;
 
+import at.yawk.password.model.Passkey;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import java.util.ArrayList;
@@ -79,6 +80,47 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
         modify(blob -> {
             PasswordBlob copy = new PasswordBlob();
             copy.setPasswords(operation.apply(new ArrayList<>(blob.getPasswords())));
+            copy.setPasskeys(new ArrayList<>(blob.getPasskeys()));
+            return copy;
+        });
+    }
+
+    /**
+     * The passkeys, in the order they were added. Like entries, they are immutable: don't modify them.
+     */
+    public List<Passkey> getPasskeys() {
+        return Collections.unmodifiableList(getData().getPasskeys());
+    }
+
+    /**
+     * Add a passkey, e.g. one made by {@link at.yawk.password.passkey.PasskeyAuthenticator#create}. A passkey of the
+     * same relying party and user handle is replaced: a relying party that creates a passkey for an account replaces
+     * the old one, as an authenticator that stores one discoverable credential per account does.
+     */
+    public void addPasskey(Passkey passkey) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getRpId().equals(passkey.getRpId()) &&
+                                   p.getUserHandle().equals(passkey.getUserHandle()));
+            passkeys.add(passkey);
+            return passkeys;
+        });
+    }
+
+    /**
+     * Delete the passkey with the id of {@code passkey}, if there is one.
+     */
+    public void deletePasskey(Passkey passkey) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getId().equals(passkey.getId()));
+            return passkeys;
+        });
+    }
+
+    private void modifyPasskeys(UnaryOperator<List<Passkey>> operation) throws Exception {
+        modify(blob -> {
+            PasswordBlob copy = new PasswordBlob();
+            copy.setPasswords(new ArrayList<>(blob.getPasswords()));
+            copy.setPasskeys(operation.apply(new ArrayList<>(blob.getPasskeys())));
             return copy;
         });
     }

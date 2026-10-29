@@ -43,6 +43,9 @@ android {
         // fail `lint`, which `check` (and so `build`) runs.
         checkDependencies = true
         error += "NewApi"
+        // credentials-play-services-auth is for apps that ask the credential manager for credentials on Android 13
+        // and older; we only provide them, on Android 14 and later
+        disable += "CredentialDependency"
         abortOnError = true
     }
 
@@ -74,9 +77,11 @@ kotlin {
 
 dependencies {
     implementation(project(":app"))
+    // the passkey provider uses the WebAuthn code of :client directly
+    implementation(project(":client"))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.credentials)
 
-    androidTestImplementation(project(":client"))
     androidTestImplementation(libs.kotlinx.coroutines.android)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)

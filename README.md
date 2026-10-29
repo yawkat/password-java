@@ -154,6 +154,7 @@ storageDir=~/.local/share/password
 |--------------|----------------------------------------------------------------|-------------------------------------------------|
 | `url`        | `https://pw.yawk.at`                                           | Server base URL, without a trailing slash       |
 | `storageDir` | `$XDG_DATA_HOME/password` (`~/.local/share/password`)          | Local copy of the database. A leading `~` is expanded. |
+| `securityKey`| `false`                                                        | Be a security key for passkeys, see [Passkeys](#desktop-security-key-linux) |
 
 Set `url` to your own server: the default is the author's. You can also enter the URL on the unlock screen.
 
@@ -256,6 +257,77 @@ Lines that can't be read are listed with the reason; accounts that are in the va
 
 Move the backup codes from the password database into the matching accounts, and then generate new backup codes at
 each site: the server never deletes old versions of the password database, so the old codes stay in them.
+
+## Passkeys
+
+The password database also keeps passkeys (WebAuthn credentials): websites and apps that support them let you sign in
+without a password. Each passkey is a key pair for one website, made by the app and saved in the encrypted database,
+so it is on every device that opens the database. *Passkeys* in the toolbar lists them; delete one there after you
+removed it at the website.
+
+**Update every app first.** Older versions refuse to open a database that has passkeys, and would fall back to an
+older local copy without them: saving there would drop the passkeys again.
+
+Using a passkey always needs the unlocked database: the app asks before creating a passkey or signing in, and
+approving there counts as verifying the user (the site sees "user verified"). A site can only use its own passkeys:
+browsers check the website, and the Android app checks that an app is one the website names (below). Passkeys are
+ES256 keys without attestation; a site that wants a certain make of security key, or another algorithm, refuses them.
+The signature counter is always 0, as for any synced passkey.
+
+### Android
+
+From Android 14 on, the app is a passkey provider for Android's credential manager, which browsers (Chrome, Firefox
+and the others on [Google's list](https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json), a copy of which is
+in `android/src/main/res/raw/privileged_browsers.json`) and apps use. Enable it under *Settings → Passwords, passkeys &
+accounts* (the name varies). Then:
+
+- **Creating** a passkey offers *Password database*: it opens the app's unlock screen, then asks to confirm.
+- **Signing in** offers *Unlock the password database* while it is locked (the app does not share the unlocked
+  database with the credential manager). After the master password, the credential manager lists the passkeys for the
+  site; the list is kept for two minutes and one sign-in.
+
+An app (rather than a browser) may only use the passkeys of a website that names it, with its signing certificate, in
+the website's [Digital Asset Links](https://developer.android.com/training/app-links/verify-android-applinks)
+(`https://<site>/.well-known/assetlinks.json`, relation `delegate_permission/common.get_login_creds` or
+`delegate_permission/common.handle_all_urls`), which the app loads to check.
+
+### Desktop: security key (Linux)
+
+On Linux the desktop app can act as a USB security key that browsers use (*Use a security key*, or *Use a phone,
+tablet or security key*), with no browser extension. It creates a virtual HID device through the kernel's `uhid`
+driver. Enable it in `config.properties`:
+
+```properties
+securityKey=true
+```
+
+The app needs read and write access to `/dev/uhid` (the `uhid` kernel module, `modprobe uhid`). For example, with a
+`uhid` group that your user is in:
+
+```
+# /etc/udev/rules.d/70-uhid.rules
+KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="uhid", MODE="0660"
+```
+
+On NixOS:
+
+```nix
+boot.kernelModules = [ "uhid" ];
+users.groups.uhid.members = [ "alice" ];
+services.udev.extraRules = ''
+  KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="uhid", MODE="0660"
+'';
+```
+
+Browsers open the key's `hidraw` device, which systemd's `fido_id` recognizes as a security key and gives to the
+logged-in user, like a real one. While the app runs, the key is plugged in. A browser request brings the app's window
+to the front: unlock the database if it is locked, and approve or refuse. Which passkey to sign in with is chosen in
+the app. The key speaks CTAP 2.0 with built-in user verification and no PIN.
+
+Anyone who can open the `hidraw` device (the logged-in user) can make requests; each one still needs your approval in
+the app. The app answers one kind of request without asking: whether it has a passkey from a list the browser names,
+while the database is unlocked, which browsers ask before choosing a security key. That answer is signed without the
+"user present" flag, so it can't be used to sign in.
 
 ## Building with nix
 

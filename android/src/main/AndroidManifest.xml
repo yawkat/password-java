@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- scanning the QR codes of 2FA accounts; asked for when first used -->
@@ -29,6 +30,30 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Passkeys for Android's credential manager, from Android 14 on (passkey_provider_enabled) -->
+        <service
+            android:name=".PasskeyProviderService"
+            android:enabled="@bool/passkey_provider_enabled"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE"
+            tools:targetApi="34">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/passkey_provider" />
+        </service>
+        <!-- only opened through the PendingIntents of PasskeyProviderService -->
+        <activity
+            android:name=".PasskeyActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|fontWeightAdjustment|locale|layoutDirection|colorMode|mcc|mnc|touchscreen|grammaticalGender"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            tools:targetApi="34" />
         <!-- clears the clipboard 30 s after a copy (AndroidSecretClipboard); only the app's own alarm sends it -->
         <receiver
             android:name="at.yawk.password.app.ClipboardClearReceiver"

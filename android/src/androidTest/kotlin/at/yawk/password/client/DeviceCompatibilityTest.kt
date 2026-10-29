@@ -8,9 +8,14 @@ import at.yawk.password.MultiFileLocalStorageProvider
 import at.yawk.password.model.DecryptedBlob
 import at.yawk.password.model.PasswordBlob
 import at.yawk.password.model.PasswordEntry
+import at.yawk.password.passkey.PasskeyAuthenticator
+import at.yawk.password.passkey.WebAuthnJson
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.io.File
 import java.io.IOException
+import java.security.KeyFactory
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -20,7 +25,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Runs the libraries the app relies on (Jackson, BouncyCastle, JCA AES-GCM, java.nio.file) on the device, which catches calls of
+ * Runs the libraries the app relies on (Jackson, BouncyCastle, JCA AES-GCM, java.nio.file, the passkeys' P-256) on the device, which catches calls of
  * JDK methods that its Android version lacks: those only fail at runtime there. CI runs this on the oldest supported
  * version (API 29).
  */
@@ -110,5 +115,24 @@ class DeviceCompatibilityTest {
         }
         val reloaded = PasswordClient("http://127.0.0.1:1", MultiFileLocalStorageProvider(dir), password).load()
         assertEquals(listOf("b"), reloaded.value!!.passwords.map { it.name })
+    }
+
+    @Test
+    fun passkey() {
+        // BouncyCastle's P-256, java.util.Base64 and the JSON of the credential provider; checked by Android's JCA
+        val passkey = PasskeyAuthenticator.create("example.com", byteArrayOf(1, 2), "alice", "Alice", 0)
+        val clientData = WebAuthnJson.clientDataJson("webauthn.get", byteArrayOf(3), "https://example.com", null)
+        val authData = PasskeyAuthenticator.assertionAuthData("example.com", true)
+        val signature = PasskeyAuthenticator.sign(passkey, authData, PasskeyAuthenticator.sha256(clientData))
+        val json = ObjectMapper().readTree(WebAuthnJson.assertionResponse(passkey, clientData, authData, signature))
+        assertEquals(passkey.credentialId, json.path("id").asText())
+
+        val verifier = Signature.getInstance("SHA256withECDSA")
+        verifier.initVerify(
+            KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(PasskeyAuthenticator.spkiPublicKey(passkey))),
+        )
+        verifier.update(authData)
+        verifier.update(PasskeyAuthenticator.sha256(clientData))
+        assertTrue(verifier.verify(signature))
     }
 }

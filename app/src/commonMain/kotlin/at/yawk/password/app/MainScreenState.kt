@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import at.yawk.password.client.PasswordStore
+import at.yawk.password.model.Passkey
 import at.yawk.password.model.PasswordEntry
 
 /**
@@ -183,6 +184,8 @@ sealed interface MainDialog {
     class ConfirmDelete(val entry: PasswordEntry) : MainDialog
 
     class ConfirmDiscard(val onDiscard: () -> Unit) : MainDialog
+    data object Passkeys : MainDialog
+    class ConfirmDeletePasskey(val passkey: Passkey) : MainDialog
     class ConfirmOfflineSave(val onConfirm: () -> Unit) : MainDialog
     data object MissingName : MainDialog
 }

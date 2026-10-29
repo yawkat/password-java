@@ -84,6 +84,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import at.yawk.password.model.Passkey
 import at.yawk.password.model.PasswordEntry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -224,6 +225,12 @@ fun MainScreen(
         }
     }
 
+    fun doDeletePasskey(passkey: Passkey) {
+        withOfflineConfirmation {
+            viewModel.deletePasskey(passkey)
+        }
+    }
+
     fun reload() {
         if (!idleNow()) return
         val previousName = currentNow()?.name
@@ -351,6 +358,7 @@ fun MainScreen(
                     ) {
                         Text("Passwords", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                         TextButton(onClick = ::newEntry, enabled = idle) { Text("New") }
+                        TextButton(onClick = { ui.dialog = MainDialog.Passkeys }, enabled = !editing) { Text("Passkeys") }
                         TextButton(onClick = ::reload, enabled = idle) { Text("Reload") }
                         TextButton(onClick = ::lock, enabled = idle) { Text("Lock") }
                     }
@@ -396,6 +404,7 @@ fun MainScreen(
                 onCopyAll = { copy(currentNow(), full = true) },
                 onReveal = { ui.revealed = !ui.revealed },
                 onReload = ::reload,
+                onPasskeys = { ui.dialog = MainDialog.Passkeys },
                 onLock = ::lock,
                 clearAfterSeconds = clipboard.clearAfterSeconds,
             )
@@ -520,6 +529,21 @@ fun MainScreen(
         )
         MainDialog.MissingName ->
             MessageDialog("Missing name", "The entry needs a name.", onDismiss = { ui.dialog = null })
+        MainDialog.Passkeys -> PasskeysDialog(
+            passkeys = state.passkeys,
+            idle = idle,
+            onDelete = { ui.dialog = MainDialog.ConfirmDeletePasskey(it) },
+            onDismiss = { ui.dialog = null },
+        )
+        is MainDialog.ConfirmDeletePasskey -> ConfirmDialog(
+            title = "Delete passkey",
+            text = "Delete the passkey for ${passkeyAccount(dialog.passkey)} at ${dialog.passkey.rpId}? You can no " +
+                "longer sign in with it, so make sure the account has another way to sign in.",
+            confirm = "Delete",
+            onConfirm = { doDeletePasskey(dialog.passkey) },
+            // back to the list
+            onDismiss = { ui.dialog = MainDialog.Passkeys },
+        )
     }
 }
 
@@ -570,6 +594,7 @@ private fun Toolbar(
     onCopyAll: () -> Unit,
     onReveal: () -> Unit,
     onReload: () -> Unit,
+    onPasskeys: () -> Unit,
     onLock: () -> Unit,
     clearAfterSeconds: Int,
 ) {
@@ -592,6 +617,8 @@ private fun Toolbar(
         ToolButton(if (revealed) "Hide" else "Reveal", "Ctrl+R", !editing, onReveal, highlighted = revealed)
         Spacer(Modifier.width(8.dp))
         ToolButton("Reload", "F5", idle, onReload)
+        Spacer(Modifier.width(8.dp))
+        ToolButton("Passkeys", "Passkeys of websites, stored in the database", !editing, onPasskeys)
         Spacer(Modifier.weight(1f))
         ToolButton("Lock", "Ctrl+L", idle, onLock)
     }

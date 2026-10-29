@@ -7,7 +7,9 @@ import at.yawk.password.client.ClientValue
 import at.yawk.password.client.PasswordClient
 import at.yawk.password.client.PasswordStore
 import at.yawk.password.client.WrongPasswordException
+import at.yawk.password.model.Passkey
 import at.yawk.password.model.PasswordEntry
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +88,15 @@ class PasswordViewModel(
      * The server URL of the configuration, as saved. The one in [UiState.Locked] is what the user typed.
      */
     private var savedUrl: String? = null
+
+    private val _passkeyRequest = MutableStateFlow<PasskeyRequest?>(null)
+
+    /**
+     * The passkey request waiting for the user, see [handlePasskeyRequest]. It stays while the database is locked: the
+     * user answers it once it is unlocked.
+     */
+    val passkeyRequest: StateFlow<PasskeyRequest?> = _passkeyRequest.asStateFlow()
+    private var passkeyAnswer: CompletableDeferred<PasskeyAnswer>? = null
 
     init {
         viewModelScope.launch {
@@ -282,6 +293,7 @@ class PasswordViewModel(
         screenState = MainScreenState()
         _state.value = UiState.Unlocked(
             entries = store.entries,
+            passkeys = store.passkeys,
             fromLocalStorage = store.isFromLocalStorage,
             status = StatusMessage(urlSaveError ?: status),
         )
@@ -330,6 +342,88 @@ class PasswordViewModel(
     }
 
     /**
+     * @return Whether the passkey was deleted.
+     */
+    fun deletePasskey(passkey: Passkey): Deferred<Boolean> {
+        val result = modify(
+            success = { "Deleted the passkey for ${passkeyLabel(passkey)}" },
+            busyText = "Saving…",
+            errorTitle = "Save failed",
+            errorText = ::saveErrorText,
+        ) { store -> store.deletePasskey(passkey) }
+        return viewModelScope.async { result.await() != null }
+    }
+
+    /**
+     * Ask the user to answer [request] (see [passkeyRequest]): to unlock the database if it is locked, and then to
+     * approve it ([answerPasskeyRequest]). A created passkey is saved before this returns. Cancelling the calling
+     * coroutine withdraws the request.
+     *
+     * Only one request can wait at a time. Another one is refused ([PasskeyOutcome.Denied]) while one waits.
+     */
+    suspend fun handlePasskeyRequest(request: PasskeyRequest): PasskeyOutcome = withContext(Dispatchers.Main.immediate) {
+        if (_passkeyRequest.value != null) {
+            return@withContext PasskeyOutcome.Denied
+        }
+        val answer = CompletableDeferred<PasskeyAnswer>()
+        passkeyAnswer = answer
+        _passkeyRequest.value = request
+        try {
+            val answered = answer.await()
+            // answers are only accepted while unlocked, but the database may have been locked since
+            val passkeys = store?.passkeys ?: return@withContext PasskeyOutcome.Denied
+            when (request) {
+                is PasskeyRequest.Create -> when {
+                    request.excluded(passkeys) != null -> PasskeyOutcome.Excluded
+                    answered !is PasskeyAnswer.Approve -> PasskeyOutcome.Denied
+                    else -> {
+                        val saved = modify(
+                            success = { "Saved a passkey for ${passkeyLabel(request.passkey)}" },
+                            busyText = "Saving…",
+                            errorTitle = "Save failed",
+                            errorText = { "The passkey could not be saved, so it was not created:\n$it" },
+                        ) { store -> store.addPasskey(request.passkey) }.await()
+                        if (saved == null) PasskeyOutcome.Failed else PasskeyOutcome.Created
+                    }
+                }
+                is PasskeyRequest.Get -> {
+                    val candidates = request.candidates(passkeys)
+                    val chosen = (answered as? PasskeyAnswer.Approve)?.passkey
+                    when {
+                        chosen != null && candidates.any { it === chosen } -> PasskeyOutcome.Chosen(chosen)
+                        candidates.isEmpty() -> PasskeyOutcome.NoCredentials
+                        else -> PasskeyOutcome.Denied
+                    }
+                }
+            }
+        } finally {
+            if (_passkeyRequest.value === request) {
+                _passkeyRequest.value = null
+                passkeyAnswer = null
+            }
+        }
+    }
+
+    /**
+     * The passkeys of the database, or `null` while it is locked. May be called from any thread.
+     */
+    fun unlockedPasskeys(): List<Passkey>? = (_state.value as? UiState.Unlocked)?.passkeys
+
+    /**
+     * Answer the waiting [passkeyRequest]. Approving needs the database to be unlocked and idle; refusing works any
+     * time.
+     */
+    fun answerPasskeyRequest(request: PasskeyRequest, answer: PasskeyAnswer) {
+        if (_passkeyRequest.value !== request) {
+            return
+        }
+        if (answer is PasskeyAnswer.Approve && (_state.value as? UiState.Unlocked)?.busy != false) {
+            return
+        }
+        passkeyAnswer?.complete(answer)
+    }
+
+    /**
      * Load the database again from the server (or the local copy, if the server is unreachable).
      *
      * @return Whether reloading succeeded.
@@ -371,6 +465,7 @@ class PasswordViewModel(
                     updateUnlocked {
                         it.copy(
                             entries = store.entries,
+                            passkeys = store.passkeys,
                             fromLocalStorage = store.isFromLocalStorage,
                             busy = false,
                             offlineSaveConfirmed = if (resetOfflineConfirmation) false else it.offlineSaveConfirmed,
@@ -402,12 +497,16 @@ class PasswordViewModel(
     }
 
     override fun onCleared() {
+        passkeyAnswer?.cancel()
         store = null
         pendingClient = null
         wipePassword()
     }
 
     private companion object {
+        fun passkeyLabel(passkey: Passkey) =
+            if (passkey.userName.isEmpty()) passkey.rpId else "${passkey.userName} at ${passkey.rpId}"
+
         fun unlockErrorMessage(e: Exception): String {
             val message = e.message ?: e.toString()
             return when {
