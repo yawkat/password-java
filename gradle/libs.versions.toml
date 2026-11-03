@@ -1,17 +1,17 @@
 [versions]
-jackson = "2.22.3"
+jackson = "2.22.4"
 # Micronaut platform BOM, applied to :server by the Micronaut Gradle plugin
-micronaut-platform = "5.1.5"
+micronaut-platform = "5.2.4"
 lombok = "1.18.48"
 slf4j = "2.0.20"
-kotlin = "2.4.20"
-compose = "1.12.1"
+kotlin = "2.4.21"
+compose = "1.12.2"
 # the version the compose gradle plugin 1.12.1 pairs with (ComposeBuildConfig.composeMaterial3Version)
 compose-material3 = "1.9.0"
 androidx-lifecycle = "2.11.0"
 kotlinx-coroutines = "1.11.0"
 # Android Gradle Plugin. It is only put on the build classpath when the Android build is enabled, see build.gradle.kts.
-agp = "9.4.1"
+agp = "9.5.0"
 androidx-activity = "1.13.0"
 # QR code scanning in the Android app: camera preview and frames, and the decoder (no Play services)
 androidx-camera = "1.6.2"
@@ -56,7 +56,7 @@ androidx-test-runner = { module = "androidx.test:runner", version.ref = "android
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
 
 [plugins]
-lombok = { id = "io.freefair.lombok", version = "9.7.0" }
+lombok = { id = "io.freefair.lombok", version = "9.8.2" }
 # the minimal variant of io.micronaut.application: same DSL, without the docker/graalvm/aot/test-resources/openrewrite plugins
 micronaut-application = { id = "io.micronaut.minimal.application", version = "5.0.2" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
