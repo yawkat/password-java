@@ -4,7 +4,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -21,6 +20,10 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import at.yawk.password.app.fido.SecurityKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("at.yawk.password.app.Main")
@@ -50,9 +53,17 @@ fun main() {
             val otpState by otpViewModel.state.collectAsState()
             val passkeyRequest by viewModel.passkeyRequest.collectAsState()
             var securityKeyError by remember { mutableStateOf<String?>(null) }
-            DisposableEffect(viewModel) {
-                val key = startSecurityKey(platform, viewModel) { securityKeyError = it }
-                onDispose { key?.close() }
+            LaunchedEffect(viewModel) {
+                // reading the configuration and opening /dev/uhid block, so not on the EDT
+                var key: SecurityKey? = null
+                try {
+                    withContext(Dispatchers.IO) {
+                        key = startSecurityKey(platform, viewModel) { securityKeyError = it }
+                    }
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable + Dispatchers.IO) { key?.close() }
+                }
             }
             Window(
                 onCloseRequest = { hooks.requestClose(exit) },

@@ -22,8 +22,11 @@ sealed interface PasskeyRequest {
         override val rpId: String get() = passkey.rpId
 
         /** The passkey of [excludeCredentials] in [passkeys], if there is one */
-        fun excluded(passkeys: List<Passkey>): Passkey? =
-            if (excludeCredentials.isEmpty()) null else PasskeyAuthenticator.find(passkeys, rpId, excludeCredentials).firstOrNull()
+        fun excluded(passkeys: List<Passkey>): Passkey? = if (excludeCredentials.isEmpty()) {
+            null
+        } else {
+            PasskeyAuthenticator.find(passkeys, rpId, excludeCredentials).firstOrNull()
+        }
     }
 
     /**

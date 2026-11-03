@@ -216,5 +216,7 @@ class PasskeyActivity : ComponentActivity() {
 
         fun intent(context: Context, mode: String): Intent =
             Intent(context, PasskeyActivity::class.java).putExtra(EXTRA_MODE, mode)
+                // PendingIntents that differ only in extras are the same, so each mode needs its own
+                .setIdentifier(mode)
     }
 }

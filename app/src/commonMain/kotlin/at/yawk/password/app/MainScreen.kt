@@ -283,7 +283,9 @@ fun MainScreen(
 
     // window-wide shortcuts, as in the Qt GUI
     val shortcuts: (KeyEvent) -> Boolean = shortcuts@{ event ->
-        if (event.type != KeyEventType.KeyDown || ui.dialog != null || latest.error != null) {
+        if (event.type != KeyEventType.KeyDown || ui.dialog != null || latest.error != null ||
+            viewModel.passkeyRequest.value != null
+        ) {
             return@shortcuts false
         }
         val ctrl = event.isCtrlPressed

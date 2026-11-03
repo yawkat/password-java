@@ -134,7 +134,9 @@ class Ctap2(
         val passkey: Passkey
         val userPresent: Boolean
         if (options?.get("up") == false) {
-            // a silent check whether we have the credential
+            // a silent check whether we have one of the listed credentials. Without a list, it would tell any local
+            // process which accounts we have.
+            if (allowList.isEmpty()) throw CtapError(CTAP2_ERR_NO_CREDENTIALS)
             val passkeys = unlockedPasskeys() ?: throw CtapError(CTAP2_ERR_NO_CREDENTIALS)
             passkey = PasskeyAuthenticator.find(passkeys, rpId, allowList).firstOrNull()
                 ?: throw CtapError(CTAP2_ERR_NO_CREDENTIALS)
@@ -148,20 +150,25 @@ class Ctap2(
             userPresent = true
         }
         val authData = PasskeyAuthenticator.assertionAuthData(rpId, userPresent, userPresent)
-        val user = buildMap<String, Any> {
-            put("id", PasskeyAuthenticator.userHandle(passkey))
-            // the account details are only for choosing among discoverable credentials, after user verification
-            if (allowList.isEmpty() && userPresent) {
-                if (passkey.userName.isNotEmpty()) put("name", passkey.userName)
-                if (passkey.userDisplayName.isNotEmpty()) put("displayName", passkey.userDisplayName)
+        return buildMap {
+            put(1L, mapOf("id" to PasskeyAuthenticator.credentialId(passkey), "type" to "public-key"))
+            put(2L, authData)
+            put(3L, PasskeyAuthenticator.sign(passkey, authData, clientDataHash))
+            // a silent answer reveals no more than the listed credential that was asked about
+            if (userPresent) {
+                put(
+                    4L,
+                    buildMap<String, Any> {
+                        put("id", PasskeyAuthenticator.userHandle(passkey))
+                        // the account details are only for choosing among discoverable credentials
+                        if (allowList.isEmpty()) {
+                            if (passkey.userName.isNotEmpty()) put("name", passkey.userName)
+                            if (passkey.userDisplayName.isNotEmpty()) put("displayName", passkey.userDisplayName)
+                        }
+                    },
+                )
             }
         }
-        return mapOf(
-            1L to mapOf("id" to PasskeyAuthenticator.credentialId(passkey), "type" to "public-key"),
-            2L to authData,
-            3L to PasskeyAuthenticator.sign(passkey, authData, clientDataHash),
-            4L to user,
-        )
     }
 
     private suspend fun ask(request: PasskeyRequest): PasskeyOutcome = try {

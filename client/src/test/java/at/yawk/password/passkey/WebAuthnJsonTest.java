@@ -50,6 +50,16 @@ public class WebAuthnJsonTest {
     }
 
     @Test
+    public void testParseCreationOptionsDefaultAlgorithms() {
+        // no pubKeyCredParams, or an empty list, mean ES256 and RS256
+        Assert.assertTrue(WebAuthnJson.parseCreationOptions(
+                "{\"rp\":{},\"user\":{\"id\":\"AQ\"},\"challenge\":\"AA\"}", "example.com").isEs256());
+        Assert.assertTrue(WebAuthnJson.parseCreationOptions(
+                "{\"rp\":{},\"user\":{\"id\":\"AQ\"},\"challenge\":\"AA\",\"pubKeyCredParams\":[]}",
+                "example.com").isEs256());
+    }
+
+    @Test
     public void testParseInvalid() {
         Assert.assertThrows(IllegalArgumentException.class, () -> WebAuthnJson.parseCreationOptions("[", null));
         Assert.assertThrows(IllegalArgumentException.class, () -> WebAuthnJson.parseCreationOptions("[]", null));

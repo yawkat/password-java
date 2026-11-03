@@ -251,8 +251,13 @@ class Ctap2Test {
         assertEquals(CTAP2_OK, status)
         // BE, BS: neither present nor verified
         assertEquals(0x18, (assertion!![2L] as ByteArray)[32].toInt())
+        // and no user handle
+        assertEquals(null, assertion[4L])
         // nobody was asked
         assertTrue(requests.isEmpty())
+
+        // without an allow list, a silent request would tell which accounts there are
+        assertEquals(CTAP2_ERR_NO_CREDENTIALS, call(CMD_GET_ASSERTION, getAssertionParameters(up = false)).first)
 
         assertEquals(
             CTAP2_ERR_NO_CREDENTIALS,

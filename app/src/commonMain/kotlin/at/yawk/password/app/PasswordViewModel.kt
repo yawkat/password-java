@@ -9,6 +9,7 @@ import at.yawk.password.client.PasswordStore
 import at.yawk.password.client.WrongPasswordException
 import at.yawk.password.model.Passkey
 import at.yawk.password.model.PasswordEntry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
@@ -357,7 +358,7 @@ class PasswordViewModel(
     /**
      * Ask the user to answer [request] (see [passkeyRequest]): to unlock the database if it is locked, and then to
      * approve it ([answerPasskeyRequest]). A created passkey is saved before this returns. Cancelling the calling
-     * coroutine withdraws the request.
+     * coroutine withdraws the request, and deletes a passkey that it was saving.
      *
      * Only one request can wait at a time. Another one is refused ([PasskeyOutcome.Denied]) while one waits.
      */
@@ -377,12 +378,21 @@ class PasswordViewModel(
                     request.excluded(passkeys) != null -> PasskeyOutcome.Excluded
                     answered !is PasskeyAnswer.Approve -> PasskeyOutcome.Denied
                     else -> {
-                        val saved = modify(
+                        val saving = modify(
                             success = { "Saved a passkey for ${passkeyLabel(request.passkey)}" },
                             busyText = "Saving…",
                             errorTitle = "Save failed",
                             errorText = { "The passkey could not be saved, so it was not created:\n$it" },
-                        ) { store -> store.addPasskey(request.passkey) }.await()
+                        ) { store -> store.addPasskey(request.passkey) }
+                        val saved = try {
+                            saving.await()
+                        } catch (e: CancellationException) {
+                            // the caller gave up while saving and never learns of the passkey, so don't keep it
+                            viewModelScope.launch {
+                                if (saving.await() != null) deletePasskey(request.passkey)
+                            }
+                            throw e
+                        }
                         if (saved == null) PasskeyOutcome.Failed else PasskeyOutcome.Created
                     }
                 }

@@ -123,7 +123,7 @@ class PasskeyProviderService : CredentialProviderService() {
                     val intent = PasskeyActivity.intent(context, PasskeyActivity.MODE_GET)
                         .putExtra(PasskeyActivity.EXTRA_PASSKEY, passkey.id)
                         // one PendingIntent per entry: extras don't tell them apart
-                        .setIdentifier(passkey.id)
+                        .setIdentifier(PasskeyActivity.MODE_GET + ":" + passkey.id)
                     entries += PublicKeyCredentialEntry.Builder(
                         context,
                         passkeyAccount(passkey),

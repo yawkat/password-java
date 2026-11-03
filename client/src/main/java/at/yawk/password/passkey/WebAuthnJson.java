@@ -69,8 +69,10 @@ public final class WebAuthnJson {
             throw new IllegalArgumentException("Missing rp.id");
         }
         JsonNode user = root.path("user");
-        boolean es256 = false;
-        for (JsonNode param : root.path("pubKeyCredParams")) {
+        JsonNode params = root.path("pubKeyCredParams");
+        // no parameters mean the defaults, ES256 and RS256
+        boolean es256 = params.isEmpty();
+        for (JsonNode param : params) {
             if (param.path("type").asText("public-key").equals("public-key") &&
                 param.path("alg").canConvertToLong() &&
                 param.path("alg").asLong() == PasskeyAuthenticator.COSE_ES256) {

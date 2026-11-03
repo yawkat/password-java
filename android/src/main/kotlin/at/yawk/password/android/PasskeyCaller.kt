@@ -21,7 +21,11 @@ import java.io.IOException
  * @property packageName The calling app, for `clientDataJSON`; `null` for a browser
  */
 @RequiresApi(34)
-class PasskeyCaller private constructor(val origin: String, val packageName: String?) {
+class PasskeyCaller private constructor(
+    val origin: String,
+    val packageName: String?,
+    private val fingerprints: List<String> = emptyList(),
+) {
     /**
      * Whether the caller may use the passkeys of [rpId]. Loads the asset links of an app's relying party, so don't
      * call this on the main thread.
@@ -41,14 +45,17 @@ class PasskeyCaller private constructor(val origin: String, val packageName: Str
     /** The relying party ID if the request names none: the host of a web origin */
     val defaultRpId: String? get() = if (packageName == null) WebAuthnJson.webOriginHost(origin) else null
 
-    private var fingerprints: List<String> = emptyList()
-
     companion object {
+        @Volatile
+        private var allowlist: String? = null
+
+        private fun allowlist(context: Context): String = allowlist
+            ?: context.resources.openRawResource(R.raw.privileged_browsers).use { it.readBytes().decodeToString() }
+                .also { allowlist = it }
+
         fun of(context: Context, info: CallingAppInfo): PasskeyCaller {
             if (info.isOriginPopulated()) {
-                val allowlist = context.resources.openRawResource(R.raw.privileged_browsers).use {
-                    it.readBytes().decodeToString()
-                }
+                val allowlist = allowlist(context)
                 // throws unless the caller is one of the privileged browsers
                 val origin = try {
                     info.getOrigin(allowlist)
@@ -62,18 +69,17 @@ class PasskeyCaller private constructor(val origin: String, val packageName: Str
             val signing = info.signingInfo
             val current = signing.apkContentsSigners.firstOrNull()
                 ?: throw SecurityException("${info.packageName} has no signature")
-            val caller = PasskeyCaller(
-                "android:apk-key-hash:" + PasskeyAuthenticator.base64Url(PasskeyAuthenticator.sha256(current.toByteArray())),
-                info.packageName,
-            )
             // a rotated key still counts for the older certificates the website may name
             val all: Array<Signature> = if (signing.hasMultipleSigners()) {
                 signing.apkContentsSigners
             } else {
                 signing.signingCertificateHistory ?: signing.apkContentsSigners
             }
-            caller.fingerprints = all.map { fingerprint(it.toByteArray()) }
-            return caller
+            return PasskeyCaller(
+                "android:apk-key-hash:" + PasskeyAuthenticator.base64Url(PasskeyAuthenticator.sha256(current.toByteArray())),
+                info.packageName,
+                all.map { fingerprint(it.toByteArray()) },
+            )
         }
 
         /** SHA-256 in the notation of asset links: upper-case hex, colon-separated */
