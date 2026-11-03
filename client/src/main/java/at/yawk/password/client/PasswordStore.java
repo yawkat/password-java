@@ -116,6 +116,19 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
         });
     }
 
+    /**
+     * Undo {@link #addPasskey}: delete {@code added}, and bring back the passkey it replaced, if there was one.
+     */
+    public void restorePasskey(Passkey added, @Nullable Passkey replaced) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getId().equals(added.getId()));
+            if (replaced != null && passkeys.stream().noneMatch(p -> p.getId().equals(replaced.getId()))) {
+                passkeys.add(replaced);
+            }
+            return passkeys;
+        });
+    }
+
     private void modifyPasskeys(UnaryOperator<List<Passkey>> operation) throws Exception {
         modify(blob -> {
             PasswordBlob copy = new PasswordBlob();

@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -358,7 +359,7 @@ class PasswordViewModel(
     /**
      * Ask the user to answer [request] (see [passkeyRequest]): to unlock the database if it is locked, and then to
      * approve it ([answerPasskeyRequest]). A created passkey is saved before this returns. Cancelling the calling
-     * coroutine withdraws the request, and deletes a passkey that it was saving.
+     * coroutine withdraws the request, and undoes the save of a created passkey.
      *
      * Only one request can wait at a time. Another one is refused ([PasskeyOutcome.Denied]) while one waits.
      */
@@ -372,28 +373,35 @@ class PasswordViewModel(
         try {
             val answered = answer.await()
             // answers are only accepted while unlocked, but the database may have been locked since
-            val passkeys = store?.passkeys ?: return@withContext PasskeyOutcome.Denied
+            val store = store ?: return@withContext PasskeyOutcome.Denied
+            val passkeys = store.passkeys
             when (request) {
                 is PasskeyRequest.Create -> when {
                     request.excluded(passkeys) != null -> PasskeyOutcome.Excluded
                     answered !is PasskeyAnswer.Approve -> PasskeyOutcome.Denied
                     else -> {
+                        val replaced = passkeys.firstOrNull {
+                            it.rpId == request.passkey.rpId && it.userHandle == request.passkey.userHandle
+                        }
                         val saving = modify(
                             success = { "Saved a passkey for ${passkeyLabel(request.passkey)}" },
                             busyText = "Saving…",
                             errorTitle = "Save failed",
                             errorText = { "The passkey could not be saved, so it was not created:\n$it" },
-                        ) { store -> store.addPasskey(request.passkey) }
-                        val saved = try {
+                        ) { it.addPasskey(request.passkey) }
+                        try {
                             saving.await()
                         } catch (e: CancellationException) {
-                            // the caller gave up while saving and never learns of the passkey, so don't keep it
-                            viewModelScope.launch {
-                                if (saving.await() != null) deletePasskey(request.passkey)
-                            }
+                            // the caller gave up and never learns of the passkey, so don't keep it
+                            withContext(NonCancellable) { undoAddPasskey(store, saving, request.passkey, replaced) }
                             throw e
                         }
-                        if (saved == null) PasskeyOutcome.Failed else PasskeyOutcome.Created
+                        // modify answers null when the database was locked meanwhile, even if the save went through
+                        if (store.passkeys.any { it.id == request.passkey.id }) {
+                            PasskeyOutcome.Created
+                        } else {
+                            PasskeyOutcome.Failed
+                        }
                     }
                 }
                 is PasskeyRequest.Get -> {
@@ -410,6 +418,28 @@ class PasswordViewModel(
             if (_passkeyRequest.value === request) {
                 _passkeyRequest.value = null
                 passkeyAnswer = null
+            }
+        }
+    }
+
+    /**
+     * Once [saving] is done: if it saved [added] to [store], replace it with [replaced] again.
+     */
+    private suspend fun undoAddPasskey(store: PasswordStore, saving: Deferred<*>, added: Passkey, replaced: Passkey?) {
+        saving.join()
+        val operationSession = session
+        mutex.withLock {
+            if (store.passkeys.none { it.id == added.id }) {
+                return
+            }
+            try {
+                withContext(ioDispatcher) { store.restorePasskey(added, replaced) }
+            } catch (e: Exception) {
+                log.warn("Could not delete the passkey of a cancelled request", e)
+                return
+            }
+            if (session == operationSession) {
+                updateUnlocked { it.copy(passkeys = store.passkeys) }
             }
         }
     }

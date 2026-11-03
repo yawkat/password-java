@@ -58,6 +58,11 @@ class MainActivity : ComponentActivity() {
         // locks right away if the app was in the background for too long, before anything is drawn
         viewModel.onForeground()
         otpViewModel.onForeground()
+        // PasskeyActivity saved the database through its own store, so ours is stale: saving it would drop the passkey
+        if (databaseChanged) {
+            databaseChanged = false
+            viewModel.reload()
+        }
     }
 
     override fun onStop() {
@@ -72,5 +77,11 @@ class MainActivity : ComponentActivity() {
             // code was copied already, and with the fingerprint unlock opening it again is quick.
             otpViewModel.onBackground()
         }
+    }
+
+    companion object {
+        /** Set when another activity saved the database */
+        @Volatile
+        var databaseChanged = false
     }
 }

@@ -185,7 +185,7 @@ public final class WebAuthnJson {
         response.put("clientDataJSON", PasskeyAuthenticator.base64Url(clientDataJson));
         response.put("authenticatorData", PasskeyAuthenticator.base64Url(authData));
         response.put("signature", PasskeyAuthenticator.base64Url(signature));
-        response.put("userHandle", passkey.getUserHandle());
+        response.put("userHandle", PasskeyAuthenticator.base64Url(PasskeyAuthenticator.userHandle(passkey)));
         ObjectNode root = credential(passkey);
         root.set("response", response);
         root.putObject("clientExtensionResults");
@@ -194,7 +194,7 @@ public final class WebAuthnJson {
 
     private static ObjectNode credential(Passkey passkey) {
         ObjectNode root = MAPPER.createObjectNode();
-        // normalized, in case another client stored it with padding
+        // normalized, in case another client stored it with padding (the user handle too)
         String id = PasskeyAuthenticator.base64Url(PasskeyAuthenticator.credentialId(passkey));
         root.put("id", id);
         root.put("rawId", id);

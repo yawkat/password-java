@@ -148,6 +148,19 @@ public class PasskeyAuthenticatorTest {
     }
 
     @Test
+    public void testFindSkipsInvalid() {
+        Passkey good = create();
+        Passkey badId = create();
+        badId.setCredentialId("not base64!");
+        Passkey badKey = create();
+        badKey.setPrivateKey(PasskeyAuthenticator.base64Url(new byte[32]));
+        List<Passkey> all = List.of(badId, good, badKey);
+        Assert.assertEquals(PasskeyAuthenticator.find(all, "example.com", null), List.of(good));
+        Assert.assertEquals(PasskeyAuthenticator.find(
+                all, "example.com", List.of(PasskeyAuthenticator.credentialId(good))), List.of(good));
+    }
+
+    @Test
     public void testInvalidPrivateKey() {
         Passkey passkey = create();
         passkey.setPrivateKey(PasskeyAuthenticator.base64Url(new byte[32]));

@@ -422,6 +422,45 @@ class PasswordViewModelTest {
         GlobalScope.async(Dispatchers.Default, start = CoroutineStart.DEFAULT) { handlePasskeyRequest(request) }
 
     @Test
+    fun passkeyCancelledWhileSaving() {
+        createDatabase("secret", "entry" to "pw")
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.awaitIdle()
+        val old = PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0)
+        val first = PasskeyRequest.Create(old, emptyList())
+        val created = vm.ask(first)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(first, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Created, runBlocking { created.await() })
+        vm.awaitIdle()
+
+        // a new passkey for the same account replaces the old one, but the caller gives up while it is saved
+        val replacing = PasskeyRequest.Create(
+            PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0),
+            emptyList(),
+        )
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val cancelled = vm.ask(replacing)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(replacing, PasskeyAnswer.Approve())
+        Thread.sleep(500)
+        cancelled.cancel()
+        server.uploadGate = null
+        gate.countDown()
+        runBlocking { cancelled.join() }
+        // the old passkey is back
+        assertEquals(listOf(old), vm.awaitIdle().passkeys)
+        platform.storage = MemoryStorageProvider()
+        val reopened = newViewModel()
+        reopened.await<UiState.Locked>()
+        reopened.unlock(server.url, "secret")
+        assertEquals(listOf(old), reopened.awaitIdle().passkeys)
+    }
+
+    @Test
     fun passkeyRequests() {
         createDatabase("secret", "entry" to "pw")
         val vm = newViewModel()

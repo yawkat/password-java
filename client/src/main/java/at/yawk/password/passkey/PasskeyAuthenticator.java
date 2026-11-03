@@ -101,7 +101,8 @@ public final class PasskeyAuthenticator {
     }
 
     /**
-     * The passkeys of {@code passkeys} for the relying party, in the order given.
+     * The passkeys of {@code passkeys} for the relying party, in the order given. Passkeys that can't be used (an
+     * invalid credential ID, user handle or private key, e.g. written by a broken client) are left out.
      *
      * @param allowList Credential IDs that the relying party accepts, or {@code null} or empty for any (a discoverable
      *                  credential request)
@@ -112,11 +113,17 @@ public final class PasskeyAuthenticator {
             if (!passkey.getRpId().equals(rpId)) {
                 continue;
             }
-            if (allowList != null && !allowList.isEmpty()) {
-                byte[] id = credentialId(passkey);
-                if (allowList.stream().noneMatch(allowed -> Arrays.equals(allowed, id))) {
-                    continue;
-                }
+            byte[] id;
+            try {
+                id = credentialId(passkey);
+                userHandle(passkey);
+                privateScalar(passkey);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (allowList != null && !allowList.isEmpty() &&
+                allowList.stream().noneMatch(allowed -> Arrays.equals(allowed, id))) {
+                continue;
             }
             found.add(passkey);
         }

@@ -34,7 +34,7 @@ private const val TAG = "PasskeyProvider"
  * under Settings, Passwords & accounts.
  *
  * The database is locked here, so this only offers entries that open [PasskeyActivity]: to create a passkey, or to
- * unlock the database for a sign-in, which then lists the passkeys ([PasskeySession]).
+ * unlock the database for a sign-in, which then lists the passkeys for that request ([PasskeySession]).
  */
 @RequiresApi(34)
 class PasskeyProviderService : CredentialProviderService() {
@@ -61,18 +61,17 @@ class PasskeyProviderService : CredentialProviderService() {
             callback.onResult(BeginGetCredentialResponse())
             return
         }
-        val passkeys = PasskeySession.get()
+        // passkeys unlocked for this app just now, and always the unlock: for a passkey created meanwhile, or another
+        // sign-in
+        val passkeys = request.callingAppInfo?.packageName?.let { PasskeySession.get(it) }
+        val intent = PasskeyActivity.intent(this, PasskeyActivity.MODE_UNLOCK)
         callback.onResult(
-            if (passkeys != null) {
-                entries(this, request, passkeys)
-            } else {
-                val intent = PasskeyActivity.intent(this, PasskeyActivity.MODE_UNLOCK)
-                BeginGetCredentialResponse(
-                    authenticationActions = listOf(
-                        AuthenticationAction(getString(R.string.passkey_unlock), pendingIntent(intent)),
-                    ),
-                )
-            },
+            BeginGetCredentialResponse(
+                credentialEntries = if (passkeys != null) entries(this, candidates(this, request, passkeys)) else emptyList(),
+                authenticationActions = listOf(
+                    AuthenticationAction(getString(R.string.passkey_unlock), pendingIntent(intent)),
+                ),
+            ),
         )
     }
 
@@ -99,9 +98,13 @@ class PasskeyProviderService : CredentialProviderService() {
         private fun CredentialProviderService.pendingIntent(intent: Intent) = pendingIntent(this, intent)
 
         /**
-         * The passkeys of [passkeys] that [request] can use, as entries that sign in with [PasskeyActivity].
+         * The passkeys of [passkeys] that [request] can use, each with the option it fits.
          */
-        fun entries(context: Context, request: BeginGetCredentialRequest, passkeys: List<Passkey>): BeginGetCredentialResponse {
+        fun candidates(
+            context: Context,
+            request: BeginGetCredentialRequest,
+            passkeys: List<Passkey>,
+        ): List<Pair<BeginGetPublicKeyCredentialOption, Passkey>> {
             // The caller is checked when the passkey is used. Here only the relying party ID of a request without one
             // comes from the browser's origin.
             val defaultRpId = request.callingAppInfo?.let {
@@ -111,7 +114,7 @@ class PasskeyProviderService : CredentialProviderService() {
                     null
                 }
             }
-            val entries = mutableListOf<CredentialEntry>()
+            val candidates = mutableListOf<Pair<BeginGetPublicKeyCredentialOption, Passkey>>()
             for (option in request.beginGetCredentialOptions.filterIsInstance<BeginGetPublicKeyCredentialOption>()) {
                 val options = try {
                     WebAuthnJson.parseRequestOptions(option.requestJson, defaultRpId)
@@ -120,21 +123,31 @@ class PasskeyProviderService : CredentialProviderService() {
                     continue
                 }
                 for (passkey in PasskeyRequest.Get(options.rpId, options.allowCredentials).candidates(passkeys)) {
-                    val intent = PasskeyActivity.intent(context, PasskeyActivity.MODE_GET)
-                        .putExtra(PasskeyActivity.EXTRA_PASSKEY, passkey.id)
-                        // one PendingIntent per entry: extras don't tell them apart
-                        .setIdentifier(PasskeyActivity.MODE_GET + ":" + passkey.id)
-                    entries += PublicKeyCredentialEntry.Builder(
-                        context,
-                        passkeyAccount(passkey),
-                        pendingIntent(context, intent),
-                        option,
-                    ).apply {
-                        if (passkey.userDisplayName.isNotEmpty()) setDisplayName(passkey.userDisplayName)
-                    }.build()
+                    candidates += option to passkey
                 }
             }
-            return BeginGetCredentialResponse(credentialEntries = entries)
+            return candidates
+        }
+
+        /**
+         * Entries for [candidates] that sign in with [PasskeyActivity].
+         */
+        fun entries(
+            context: Context,
+            candidates: List<Pair<BeginGetPublicKeyCredentialOption, Passkey>>,
+        ): List<CredentialEntry> = candidates.map { (option, passkey) ->
+            val intent = PasskeyActivity.intent(context, PasskeyActivity.MODE_GET)
+                .putExtra(PasskeyActivity.EXTRA_PASSKEY, passkey.id)
+                // one PendingIntent per entry: extras don't tell them apart
+                .setIdentifier(PasskeyActivity.MODE_GET + ":" + passkey.id)
+            PublicKeyCredentialEntry.Builder(
+                context,
+                passkeyAccount(passkey),
+                pendingIntent(context, intent),
+                option,
+            ).apply {
+                if (passkey.userDisplayName.isNotEmpty()) setDisplayName(passkey.userDisplayName)
+            }.build()
         }
     }
 }
