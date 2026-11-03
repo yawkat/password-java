@@ -681,7 +681,8 @@ private fun CodeDrum(account: OtpAccount, now: Long, style: TextStyle) {
     }
     val periodMillis = account.period * 1000L
     val step = Math.floorDiv(now, periodMillis)
-    val rowHeight = with(LocalDensity.current) { style.lineHeight.toDp() }
+    // through px: TextUnit.toDp() resolves to FontScalingLinear, which Compose restricts to its own library group
+    val rowHeight = with(LocalDensity.current) { style.lineHeight.toPx().toDp() }
     // two rows: the current code starts in the bottom one, below the previous code, and the next one comes into view
     // as it moves up. The code after that only appears once the next one is current.
     Box(Modifier.height(rowHeight * 2).clipToBounds()) {
