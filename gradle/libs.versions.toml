@@ -59,7 +59,7 @@ androidx-test-runner = { module = "androidx.test:runner", version.ref = "android
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
 
 [plugins]
-lombok = { id = "io.freefair.lombok", version = "9.8.2" }
+lombok = { id = "io.freefair.lombok", version = "9.8.3" }
 # the minimal variant of io.micronaut.application: same DSL, without the docker/graalvm/aot/test-resources/openrewrite plugins
 micronaut-application = { id = "io.micronaut.minimal.application", version = "5.0.2" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
