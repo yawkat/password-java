@@ -18,6 +18,7 @@ import androidx.credentials.provider.BeginCreatePublicKeyCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialResponse
 import androidx.credentials.provider.BeginGetPublicKeyCredentialOption
+import androidx.credentials.provider.CallingAppInfo
 import androidx.credentials.provider.CreateEntry
 import androidx.credentials.provider.CredentialEntry
 import androidx.credentials.provider.CredentialProviderService
@@ -61,13 +62,19 @@ class PasskeyProviderService : CredentialProviderService() {
             callback.onResult(BeginGetCredentialResponse())
             return
         }
-        // passkeys unlocked for this app just now, and always the unlock: for a passkey created meanwhile, or another
-        // sign-in
-        val passkeys = request.callingAppInfo?.packageName?.let { PasskeySession.get(it) }
+        // passkeys unlocked for this caller just now, and always the unlock: for a passkey created meanwhile, or
+        // another sign-in
+        val info = request.callingAppInfo
+        val caller = info?.let { caller(this, it) }
+        val passkeys = if (caller != null) PasskeySession.get(PasskeySession.key(info, caller)) else null
         val intent = PasskeyActivity.intent(this, PasskeyActivity.MODE_UNLOCK)
         callback.onResult(
             BeginGetCredentialResponse(
-                credentialEntries = if (passkeys != null) entries(this, candidates(this, request, passkeys)) else emptyList(),
+                credentialEntries = if (caller != null && passkeys != null) {
+                    entries(this, candidates(request, caller, passkeys))
+                } else {
+                    emptyList()
+                },
                 authenticationActions = listOf(
                     AuthenticationAction(getString(R.string.passkey_unlock), pendingIntent(intent)),
                 ),
@@ -97,27 +104,28 @@ class PasskeyProviderService : CredentialProviderService() {
 
         private fun CredentialProviderService.pendingIntent(intent: Intent) = pendingIntent(this, intent)
 
+        /** The caller, or `null` if it is not allowed to name a website ([PasskeyCaller.of]) */
+        fun caller(context: Context, info: CallingAppInfo): PasskeyCaller? = try {
+            PasskeyCaller.of(context, info)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Refusing ${info.packageName}", e)
+            null
+        }
+
         /**
-         * The passkeys of [passkeys] that [request] can use, each with the option it fits.
+         * The passkeys of [passkeys] that [request] names, each with the option it fits. Whether [caller] may use them
+         * is checked separately ([PasskeyCaller.mayUse]); here it only gives the relying party ID of a request without
+         * one, the host of a browser's origin.
          */
         fun candidates(
-            context: Context,
             request: BeginGetCredentialRequest,
+            caller: PasskeyCaller,
             passkeys: List<Passkey>,
         ): List<Pair<BeginGetPublicKeyCredentialOption, Passkey>> {
-            // The caller is checked when the passkey is used. Here only the relying party ID of a request without one
-            // comes from the browser's origin.
-            val defaultRpId = request.callingAppInfo?.let {
-                try {
-                    PasskeyCaller.of(context, it).defaultRpId
-                } catch (e: SecurityException) {
-                    null
-                }
-            }
             val candidates = mutableListOf<Pair<BeginGetPublicKeyCredentialOption, Passkey>>()
             for (option in request.beginGetCredentialOptions.filterIsInstance<BeginGetPublicKeyCredentialOption>()) {
                 val options = try {
-                    WebAuthnJson.parseRequestOptions(option.requestJson, defaultRpId)
+                    WebAuthnJson.parseRequestOptions(option.requestJson, caller.defaultRpId)
                 } catch (e: IllegalArgumentException) {
                     Log.w(TAG, "Invalid passkey request", e)
                     continue

@@ -74,8 +74,8 @@ internal fun PasskeyRequestBanner(request: PasskeyRequest, viewModel: PasswordVi
 internal fun PasskeyRequestDialog(request: PasskeyRequest, state: UiState.Unlocked, viewModel: PasswordViewModel) {
     val dismiss = { viewModel.answerPasskeyRequest(request, PasskeyAnswer.Dismiss) }
     val approve = { passkey: Passkey? ->
-        // the user is told below that this replaces the server copy
-        if (state.fromLocalStorage) viewModel.confirmOfflineSave()
+        // the user is told below that creating a passkey replaces the server copy; a sign-in saves nothing
+        if (request is PasskeyRequest.Create && state.fromLocalStorage) viewModel.confirmOfflineSave()
         viewModel.answerPasskeyRequest(request, PasskeyAnswer.Approve(passkey))
     }
     // like ConfirmDialog, the safe choice has the focus

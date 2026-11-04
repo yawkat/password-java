@@ -7,7 +7,6 @@ import androidx.credentials.provider.CallingAppInfo
 import at.yawk.password.app.AssetLinks
 import at.yawk.password.passkey.PasskeyAuthenticator
 import at.yawk.password.passkey.WebAuthnJson
-import java.io.IOException
 
 /**
  * Who asks for a passkey through the credential manager, and whether it may use those of a relying party.
@@ -33,11 +32,10 @@ class PasskeyCaller private constructor(
     fun mayUse(rpId: String): Boolean = if (packageName == null) {
         WebAuthnJson.originMatchesRpId(origin, rpId)
     } else {
+        // the caller chose rpId: whatever goes wrong with it, the answer is no
         try {
             AssetLinks.allows(AssetLinks.fetch(rpId), packageName, fingerprints)
-        } catch (e: IOException) {
-            false
-        } catch (e: IllegalArgumentException) {
+        } catch (e: Exception) {
             false
         }
     }

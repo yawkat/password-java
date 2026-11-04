@@ -135,9 +135,14 @@ class PasskeyActivity : ComponentActivity() {
         } catch (e: IllegalArgumentException) {
             return fail(CreateCredentialUnknownException("Invalid request: ${e.message}"))
         }
-        // saving it, or undoing that for a cancelled request
-        MainActivity.databaseChanged = true
-        when (viewModel.handlePasskeyRequest(PasskeyRequest.Create(passkey, options.excludeCredentials))) {
+        val outcome = try {
+            viewModel.handlePasskeyRequest(PasskeyRequest.Create(passkey, options.excludeCredentials))
+        } finally {
+            // saved, or undone for a cancelled request: either way the other copies are outdated
+            PasskeySession.clear()
+            DatabaseChanges.changed()
+        }
+        when (outcome) {
             PasskeyOutcome.Created -> {
                 val clientDataJson = WebAuthnJson.clientDataJson(
                     "webauthn.create", options.challenge, caller.origin, caller.packageName,
@@ -160,12 +165,20 @@ class PasskeyActivity : ComponentActivity() {
      */
     private suspend fun unlock() {
         val request = PendingIntentHandler.retrieveBeginGetCredentialRequest(intent) ?: return cancel()
+        val info = request.callingAppInfo
+        val caller = info?.let { PasskeyProviderService.caller(this, it) }
         val unlocked = viewModel.state.first { it is UiState.Unlocked } as UiState.Unlocked
-        val candidates = PasskeyProviderService.candidates(this, request, unlocked.passkeys)
-        val packageName = request.callingAppInfo?.packageName
-        if (packageName != null) {
-            PasskeySession.put(candidates.map { it.second }.distinct(), packageName)
+        if (info == null || caller == null) {
+            val response = BeginGetCredentialResponse()
+            return finishWith(Intent().also { PendingIntentHandler.setBeginGetCredentialResponse(it, response) })
         }
+        // only the passkeys the caller may use: the entries name the accounts
+        val allowed = withContext(Dispatchers.IO) {
+            unlocked.passkeys.map { it.rpId }.distinct().filter { caller.mayUse(it) }.toSet()
+        }
+        val candidates =
+            PasskeyProviderService.candidates(request, caller, unlocked.passkeys.filter { it.rpId in allowed })
+        PasskeySession.put(candidates.map { it.second }.distinct(), PasskeySession.key(info, caller))
         val response = BeginGetCredentialResponse(credentialEntries = PasskeyProviderService.entries(this, candidates))
         finishWith(Intent().also { PendingIntentHandler.setBeginGetCredentialResponse(it, response) })
     }
@@ -180,13 +193,16 @@ class PasskeyActivity : ComponentActivity() {
             finishWith(Intent().also { PendingIntentHandler.setGetCredentialException(it, e) })
         }
 
-        val passkey = PasskeySession.take(intent.getStringExtra(EXTRA_PASSKEY) ?: "", request.callingAppInfo.packageName)
-            ?: return fail(NoCredentialException("Unlock the password database again"))
         val caller = try {
             PasskeyCaller.of(this, request.callingAppInfo)
         } catch (e: SecurityException) {
+            PasskeySession.clear()
             return fail(GetPublicKeyCredentialDomException(SecurityError(), e.message))
         }
+        val passkey = PasskeySession.take(
+            intent.getStringExtra(EXTRA_PASSKEY) ?: "",
+            PasskeySession.key(request.callingAppInfo, caller),
+        ) ?: return fail(NoCredentialException("Unlock the password database again"))
         for (option in request.credentialOptions.filterIsInstance<GetPublicKeyCredentialOption>()) {
             val options = try {
                 WebAuthnJson.parseRequestOptions(option.requestJson, caller.defaultRpId)

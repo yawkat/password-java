@@ -266,7 +266,8 @@ so it is on every device that opens the database. *Passkeys* in the toolbar list
 removed it at the website.
 
 **Update every app first.** Older versions refuse to open a database that has passkeys, and would fall back to an
-older local copy without them: saving there would drop the passkeys again.
+older local copy without them: saving there would drop the passkeys again. (From this version on, an app that can't
+read the server copy says so and stops, instead of falling back.)
 
 Using a passkey always needs the unlocked database: the app asks before creating a passkey or signing in, and
 approving there counts as verifying the user (the site sees "user verified"). A site can only use its own passkeys:
@@ -301,23 +302,33 @@ driver. Enable it in `config.properties`:
 securityKey=true
 ```
 
-The app needs read and write access to `/dev/uhid` (the `uhid` kernel module, `modprobe uhid`). For example, with a
-`uhid` group that your user is in:
+The app needs read and write access to `/dev/uhid` (the `uhid` kernel module, `modprobe uhid`). Note what that
+grants: `/dev/uhid` is not specific to security keys. Whoever opens it chooses what the device is, so it can just as
+well create a keyboard or a mouse, whose input goes to whatever session, login screen or text console is active on the
+machine. The vault isn't affected, but don't hand this out more widely than needed.
+
+Prefer giving access only to the user logged in at the seat, as for a real security key (`uaccess`). The rule must
+come before systemd's `73-seat-late.rules`:
 
 ```
 # /etc/udev/rules.d/70-uhid.rules
-KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="uhid", MODE="0660"
+KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"
 ```
 
-On NixOS:
+On NixOS (`services.udev.extraRules` would end up in `99-local.rules`, too late for `uaccess`):
 
 ```nix
 boot.kernelModules = [ "uhid" ];
-users.groups.uhid.members = [ "alice" ];
-services.udev.extraRules = ''
-  KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="uhid", MODE="0660"
-'';
+services.udev.packages = [
+  (pkgs.writeTextDir "lib/udev/rules.d/70-uhid.rules" ''
+    KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"
+  '')
+];
 ```
+
+This still lets every process of that user open the device while they are logged in at the seat, and the app keeps
+the device it opened after switching users. A static group (`GROUP="uhid", MODE="0660"`) is worse: it also covers SSH
+sessions, cron jobs and `systemd --user` services of every member, whether or not they are at the seat.
 
 Browsers open the key's `hidraw` device, which systemd's `fido_id` recognizes as a security key and gives to the
 logged-in user, like a real one. While the app runs, the key is plugged in. A browser request brings the app's window

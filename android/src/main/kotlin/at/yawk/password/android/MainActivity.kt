@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.app.AndroidPlatform
@@ -15,7 +16,13 @@ import at.yawk.password.app.App
 import at.yawk.password.app.BiometricAuthenticator
 import at.yawk.password.app.OtpViewModel
 import at.yawk.password.app.PasswordViewModel
+import at.yawk.password.app.UiState
 import at.yawk.password.app.WindowHooks
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PasswordViewModel by viewModels {
@@ -46,6 +53,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             App(viewModel, otpViewModel, clipboard, hooks, onExit = ::finish, touchInput = true)
         }
+        // also while stopped, e.g. next to a browser in multi-window: saving our stale copy would drop the passkey
+        lifecycleScope.launch { DatabaseChanges.flow.collect { viewModel.markStale() } }
+        // a sign-in must not use a passkey that was deleted or replaced since it was unlocked
+        lifecycleScope.launch {
+            viewModel.state.map { (it as? UiState.Unlocked)?.passkeys }.filterNotNull().distinctUntilChanged().drop(1)
+                .collect { PasskeySession.clear() }
+        }
     }
 
     override fun onDestroy() {
@@ -58,11 +72,6 @@ class MainActivity : ComponentActivity() {
         // locks right away if the app was in the background for too long, before anything is drawn
         viewModel.onForeground()
         otpViewModel.onForeground()
-        // PasskeyActivity saved the database through its own store, so ours is stale: saving it would drop the passkey
-        if (databaseChanged) {
-            databaseChanged = false
-            viewModel.reload()
-        }
     }
 
     override fun onStop() {
@@ -77,11 +86,5 @@ class MainActivity : ComponentActivity() {
             // code was copied already, and with the fingerprint unlock opening it again is quick.
             otpViewModel.onBackground()
         }
-    }
-
-    companion object {
-        /** Set when another activity saved the database */
-        @Volatile
-        var databaseChanged = false
     }
 }

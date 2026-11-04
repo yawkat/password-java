@@ -144,7 +144,12 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
                 return i;
             }
         }
-        throw new IllegalStateException("Entry is not part of this store: " + entry.getName());
+        // a reload replaced the instances: an unchanged entry is still the same
+        int equal = entries.indexOf(entry);
+        if (equal >= 0) {
+            return equal;
+        }
+        throw new IllegalStateException("“" + entry.getName() + "” was changed or deleted meanwhile");
     }
 
     private static PasswordEntry entry(String name, String value) {

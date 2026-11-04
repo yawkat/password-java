@@ -241,6 +241,7 @@ class PasswordViewModel(
             else -> return
         }
         session++
+        stale = false
         store = null
         screenState = MainScreenState()
         pendingClient = null
@@ -357,13 +358,50 @@ class PasswordViewModel(
     }
 
     /**
+     * Whether another client in this process saved the database since we loaded it ([markStale]): the next operation
+     * reloads it first. Only touched under [mutex], apart from [markStale] and [lockNow].
+     */
+    @Volatile
+    private var stale = false
+
+    /**
+     * Another client in this process (e.g. Android's passkey activity) saved the database, so ours is outdated: reload
+     * it now if we can, and in any case before the next save.
+     */
+    fun markStale() {
+        if (store == null) {
+            return
+        }
+        stale = true
+        reload()
+    }
+
+    /**
      * Ask the user to answer [request] (see [passkeyRequest]): to unlock the database if it is locked, and then to
      * approve it ([answerPasskeyRequest]). A created passkey is saved before this returns. Cancelling the calling
      * coroutine withdraws the request, and undoes the save of a created passkey.
      *
      * Only one request can wait at a time. Another one is refused ([PasskeyOutcome.Denied]) while one waits.
      */
-    suspend fun handlePasskeyRequest(request: PasskeyRequest): PasskeyOutcome = withContext(Dispatchers.Main.immediate) {
+    suspend fun handlePasskeyRequest(request: PasskeyRequest): PasskeyOutcome {
+        var undo: (suspend () -> Unit)? = null
+        try {
+            return awaitPasskeyAnswer(request) { undo = it }
+        } catch (e: CancellationException) {
+            // The caller gave up and never learns of the passkey, so don't keep it. That includes a cancellation that
+            // comes just after the save: withContext then throws instead of returning the result.
+            undo?.let { withContext(NonCancellable + Dispatchers.Main.immediate) { it() } }
+            throw e
+        }
+    }
+
+    /**
+     * [handlePasskeyRequest], which gets the undo of a passkey save through [onSave] before the save starts.
+     */
+    private suspend fun awaitPasskeyAnswer(
+        request: PasskeyRequest,
+        onSave: (suspend () -> Unit) -> Unit,
+    ): PasskeyOutcome = withContext(Dispatchers.Main.immediate) {
         if (_passkeyRequest.value != null) {
             return@withContext PasskeyOutcome.Denied
         }
@@ -389,13 +427,8 @@ class PasswordViewModel(
                             errorTitle = "Save failed",
                             errorText = { "The passkey could not be saved, so it was not created:\n$it" },
                         ) { it.addPasskey(request.passkey) }
-                        try {
-                            saving.await()
-                        } catch (e: CancellationException) {
-                            // the caller gave up and never learns of the passkey, so don't keep it
-                            withContext(NonCancellable) { undoAddPasskey(store, saving, request.passkey, replaced) }
-                            throw e
-                        }
+                        onSave { undoAddPasskey(store, saving, request.passkey, replaced) }
+                        saving.await()
                         // modify answers null when the database was locked meanwhile, even if the save went through
                         if (store.passkeys.any { it.id == request.passkey.id }) {
                             PasskeyOutcome.Created
@@ -497,7 +530,14 @@ class PasswordViewModel(
         return viewModelScope.async {
             mutex.withLock {
                 try {
-                    val result = withContext(ioDispatcher) { operation(store) }
+                    val result = withContext(ioDispatcher) {
+                        if (stale) {
+                            // saving our copy would drop what the other one saved
+                            stale = false
+                            store.reload()
+                        }
+                        operation(store)
+                    }
                     if (session != operationSession) {
                         // locked meanwhile
                         return@withLock null

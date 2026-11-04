@@ -51,7 +51,9 @@ class AssetLinksTest {
 
     @Test
     fun invalidDomain() {
-        for (domain in listOf("", "example.com/x", "user@example.com", "example.com:443", "example.com?x")) {
+        val domains = listOf("", "example.com/x", "user@example.com", "example.com:443", "example.com?x")
+        // not even a URI
+        for (domain in domains + listOf("ex ample", "a\\b")) {
             assertFailsWith<IllegalArgumentException> { AssetLinks.fetch(domain) }
         }
     }

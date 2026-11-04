@@ -422,6 +422,44 @@ class PasswordViewModelTest {
         GlobalScope.async(Dispatchers.Default, start = CoroutineStart.DEFAULT) { handlePasskeyRequest(request) }
 
     @Test
+    fun staleCopyIsReloadedBeforeSaving() {
+        createDatabase("secret", "entry" to "pw")
+        val main = newViewModel()
+        main.await<UiState.Locked>()
+        main.unlock(server.url, "secret")
+        main.awaitIdle()
+
+        // the main view model hears of a change while busy, so it can't reload right away
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val saving = main.save(null, "a", "1")
+        Thread.sleep(200)
+        main.markStale()
+        server.uploadGate = null
+        gate.countDown()
+        assertNotNull(runBlocking { saving.await() })
+        main.awaitIdle()
+
+        // another one (Android's passkey activity) saves a passkey
+        val other = newViewModel()
+        other.await<UiState.Locked>()
+        other.unlock(server.url, "secret")
+        other.awaitIdle()
+        val passkey = PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0)
+        val create = PasskeyRequest.Create(passkey, emptyList())
+        val created = other.ask(create)
+        other.awaitPasskeyRequest()
+        other.answerPasskeyRequest(create, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Created, runBlocking { created.await() })
+
+        // the next save of the main one reloads first, and keeps the passkey
+        assertNotNull(runBlocking { main.save(null, "b", "2").await() })
+        val saved = main.awaitIdle()
+        assertEquals(listOf(passkey), saved.passkeys)
+        assertEquals(listOf("entry", "a", "b"), saved.entries.map { it.name })
+    }
+
+    @Test
     fun passkeyCancelledWhileSaving() {
         createDatabase("secret", "entry" to "pw")
         val vm = newViewModel()

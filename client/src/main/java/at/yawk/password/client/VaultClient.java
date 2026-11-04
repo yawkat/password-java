@@ -164,6 +164,9 @@ public class VaultClient<T> {
         DecryptedBlob<T> remoteBlob;
         try {
             remoteBlob = BlobCodec.decrypt(objectMapper, keys, remote, dataClass);
+        } catch (UnreadableDatabaseException e) {
+            // authentic, just newer than we can read: the local copy is older still
+            throw e;
         } catch (Exception e) {
             log.warn("Could not verify db from remote, trying local", e);
             try {

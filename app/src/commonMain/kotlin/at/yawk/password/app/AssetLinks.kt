@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URISyntaxException
 
 /**
  * Digital Asset Links (`https://<domain>/.well-known/assetlinks.json`): a website names the Android apps that may use
@@ -46,13 +47,18 @@ object AssetLinks {
      * Load the statements of [domain]. Redirects are not followed, as Digital Asset Links requires.
      *
      * @throws IOException if they can't be loaded
+     * @throws IllegalArgumentException if [domain] is not a domain
      */
     fun fetch(domain: String): String {
         require(domain.isNotEmpty() && domain.none { it == '/' || it == '@' || it == ':' || it == '?' || it == '#' }) {
             "Invalid domain $domain"
         }
-        val connection = URI("https", domain, "/.well-known/assetlinks.json", null).toURL()
-            .openConnection() as HttpURLConnection
+        val url = try {
+            URI("https", domain, "/.well-known/assetlinks.json", null).toURL()
+        } catch (e: URISyntaxException) {
+            throw IllegalArgumentException("Invalid domain $domain", e)
+        }
+        val connection = url.openConnection() as HttpURLConnection
         try {
             connection.instanceFollowRedirects = false
             connection.connectTimeout = TIMEOUT_MS

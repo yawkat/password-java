@@ -1,12 +1,15 @@
 package at.yawk.password.client;
 
 import at.yawk.password.MemoryStorageProvider;
+import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.server.TestServer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.List;
+import java.util.Map;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -92,6 +95,25 @@ public class ProtocolTest {
         Assert.assertTrue(e.getMessage().contains("403"), e.getMessage());
         // rejected by the server, and the local copy doesn't decrypt
         Assert.expectThrows(WrongPasswordException.class, () -> client(storage, "wrong".getBytes()).load());
+    }
+
+    @Test
+    public void testNewerServerCopy() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        PasswordClient client = client(storage, PASSWORD);
+        client.load();
+        client.save(data("old"));
+
+        // a newer app saves a field that this one doesn't know
+        byte[] local = storage.load();
+        KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(local));
+        DecryptedBlob<Map<String, Object>> newer = new DecryptedBlob<>();
+        newer.setData(Map.of("passwords", List.of(), "future", 1));
+        newer.setRevision(5);
+        new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
+
+        // refused, rather than falling back to the local copy and replacing the newer data with it
+        Assert.expectThrows(UnreadableDatabaseException.class, () -> client(storage, PASSWORD).load());
     }
 
     @Test
