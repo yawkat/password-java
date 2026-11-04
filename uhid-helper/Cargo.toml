@@ -1,0 +1,9 @@
+[package]
+name = "password-uhid"
+version = "0.1.0"
+edition = "2024"
+description = "Creates the virtual FIDO security key of the password-java desktop app"
+publish = false
+
+[profile.release]
+panic = "abort"

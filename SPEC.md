@@ -2,8 +2,8 @@
 
 This describes the protocol between client and server and the format of the stored database, as implemented in
 `shared` (`AuthProtocol`, `Base32`), `client` (`VaultClient`, `PasswordClient`, `VaultKey`, `VaultStore`,
-`DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`, `otp/*`, `model/*`) and `server` (`DatabaseController`,
-`Vaults`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`, `WebHeadersFilter`).
+`DatabaseClient`, `KeyMaterial`, `BlobCodec`, `LegacyBlob`, `otp/*`, `passkey/*`, `model/*`) and `server`
+(`DatabaseController`, `Vaults`, `DatabaseState`, `SignatureFilter`, `UnregisteredFilter`, `WebHeadersFilter`).
 
 The server stores one opaque blob per vault and never sees a password or the plaintext. There are two vaults: the
 password vault, opened with the master password, and the [2FA vault](#2fa-vault), opened with its own password. Both
@@ -226,7 +226,38 @@ N = 2^16, r = 8, p = 1, 32-byte key and salt).
 | `data.passwords`         | array           | Entries, in display order                                            |
 | `data.passwords[].name`  | string          | Entry name                                                           |
 | `data.passwords[].value` | string          | Free text. By convention, the first line (up to `\n` or `\r`) is the password; the rest holds username, notes and so on. |
+| `data.passkeys`          | array           | Passkeys (below), in the order they were added. Left out while empty. |
 | `revision`               | integer         | Incremented by every save (0 in legacy blobs)                        |
+
+A passkey (WebAuthn credential) in `data.passkeys`. Binary values are base64url without padding, as in WebAuthn's JSON:
+
+```json
+{
+  "id": "0b7c4c1e-2a5d-4f43-9b0e-6d1f3e2a9c41",
+  "rpId": "example.com",
+  "credentialId": "6sJ0p8b1...",
+  "userHandle": "dXNlci0xMjM",
+  "userName": "alice@example.com",
+  "userDisplayName": "Alice",
+  "privateKey": "Fh3x...",
+  "created": 1761736800000
+}
+```
+
+| Field             | Type    | Meaning                                                                         |
+|-------------------|---------|---------------------------------------------------------------------------------|
+| `id`              | string  | Random UUID, to tell passkeys apart                                             |
+| `rpId`            | string  | Relying party ID, e.g. `example.com`                                            |
+| `credentialId`    | string  | Credential ID, 32 random bytes                                                  |
+| `userHandle`      | string  | `user.id` of the relying party, 1 to 64 bytes                                   |
+| `userName`        | string  | `user.name`, may be empty                                                       |
+| `userDisplayName` | string  | `user.displayName`, may be empty                                                |
+| `privateKey`      | string  | ECDSA P-256 private scalar, 32 bytes big-endian. The public key is derived from it. |
+| `created`         | integer | Milliseconds since the epoch                                                    |
+
+`passkeys` is left out of the JSON while it is empty, so that clients that predate passkeys (which reject unknown
+fields) keep opening the database until the first passkey is created. Adding a passkey with the `rpId` and
+`userHandle` of an existing one replaces it, as an authenticator does for discoverable credentials.
 
 The 2FA vault has the same `revision`, and `data` holds its accounts:
 
@@ -326,6 +357,31 @@ reaches the local copy and then fails, until the vault is unlocked with its pass
 locks out the exported keys of all devices, e.g. that of a lost phone. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
 fingerprint, so that a fingerprint opens the 2FA vault. The exported key opens the vault as the password does, so it
 is kept as safe as the data.
+
+### Passkeys
+
+The apps are a WebAuthn authenticator for the passkeys of the database (`PasskeyAuthenticator`):
+
+- Algorithm ES256 (COSE -7) only; the signature is ASN.1 DER over `authenticatorData ‖ clientDataHash`.
+- Attestation format `none`, AAGUID all zero.
+- `authenticatorData` = `SHA-256(rpId) ‖ flags ‖ counter (4 bytes, always 0)`, then for a registration the attested
+  credential data (`AAGUID ‖ len(credentialId) (2 bytes) ‖ credentialId ‖ COSE_Key`). Flags: UP (`0x01`), UV
+  (`0x04`), BE (`0x08`) and BS (`0x10`), plus AT (`0x40`) for a registration. Approving in the unlocked app counts as
+  user verification.
+- The COSE_Key is the CTAP2 canonical CBOR map `{1: 2, 3: -7, -1: 1, -2: x, -3: y}`.
+
+The Android app is a credential provider (`PasskeyProviderService`), which takes and returns WebAuthn's JSON
+(`WebAuthnJson`). For a browser of the privileged list it uses the origin that the browser names, which must be the
+relying party ID or a subdomain of it, and signs the `clientDataHash` the browser passes. For any other app, the
+origin is `android:apk-key-hash:<base64url(SHA-256(signing certificate))>`, the app must be named in the relying
+party's Digital Asset Links, and the provider makes `clientDataJSON` itself.
+
+The desktop app is a CTAP 2.0 security key on a Linux `uhid` device (`fido/*`): CTAPHID (init, ping, wink, CBOR,
+cancel, keepalive; no U2F), and the CTAP2 commands `authenticatorMakeCredential`, `authenticatorGetAssertion` and
+`authenticatorGetInfo`. It reports `rk`, `up` and `uv` (built-in user verification) and no PIN protocol, and returns
+one assertion: the user chooses the passkey in the app. A `getAssertion` with `up: false` (a browser checking an
+allow list) is answered from the unlocked database without asking, with neither UP nor UV set; while the database is
+locked it finds nothing.
 
 ### Apps
 

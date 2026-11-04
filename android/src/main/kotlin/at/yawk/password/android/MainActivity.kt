@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.app.AndroidPlatform
@@ -15,7 +16,13 @@ import at.yawk.password.app.App
 import at.yawk.password.app.BiometricAuthenticator
 import at.yawk.password.app.OtpViewModel
 import at.yawk.password.app.PasswordViewModel
+import at.yawk.password.app.UiState
 import at.yawk.password.app.WindowHooks
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PasswordViewModel by viewModels {
@@ -45,6 +52,13 @@ class MainActivity : ComponentActivity() {
         val clipboard = AndroidSecretClipboard.get(this)
         setContent {
             App(viewModel, otpViewModel, clipboard, hooks, onExit = ::finish, touchInput = true)
+        }
+        // also while stopped, e.g. next to a browser in multi-window: saving our stale copy would drop the passkey
+        lifecycleScope.launch { DatabaseChanges.flow.collect { viewModel.markStale() } }
+        // a sign-in must not use a passkey that was deleted or replaced since it was unlocked
+        lifecycleScope.launch {
+            viewModel.state.map { (it as? UiState.Unlocked)?.passkeys }.filterNotNull().distinctUntilChanged().drop(1)
+                .collect { PasskeySession.clear() }
         }
     }
 

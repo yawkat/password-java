@@ -1,5 +1,6 @@
 package at.yawk.password.client;
 
+import at.yawk.password.model.Passkey;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import java.util.ArrayList;
@@ -79,6 +80,60 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
         modify(blob -> {
             PasswordBlob copy = new PasswordBlob();
             copy.setPasswords(operation.apply(new ArrayList<>(blob.getPasswords())));
+            copy.setPasskeys(new ArrayList<>(blob.getPasskeys()));
+            return copy;
+        });
+    }
+
+    /**
+     * The passkeys, in the order they were added. Like entries, they are immutable: don't modify them.
+     */
+    public List<Passkey> getPasskeys() {
+        return Collections.unmodifiableList(getData().getPasskeys());
+    }
+
+    /**
+     * Add a passkey, e.g. one made by {@link at.yawk.password.passkey.PasskeyAuthenticator#create}. A passkey of the
+     * same relying party and user handle is replaced: a relying party that creates a passkey for an account replaces
+     * the old one, as an authenticator that stores one discoverable credential per account does.
+     */
+    public void addPasskey(Passkey passkey) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getRpId().equals(passkey.getRpId()) &&
+                                   p.getUserHandle().equals(passkey.getUserHandle()));
+            passkeys.add(passkey);
+            return passkeys;
+        });
+    }
+
+    /**
+     * Delete the passkey with the id of {@code passkey}, if there is one.
+     */
+    public void deletePasskey(Passkey passkey) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getId().equals(passkey.getId()));
+            return passkeys;
+        });
+    }
+
+    /**
+     * Undo {@link #addPasskey}: delete {@code added}, and bring back the passkey it replaced, if there was one.
+     */
+    public void restorePasskey(Passkey added, @Nullable Passkey replaced) throws Exception {
+        modifyPasskeys(passkeys -> {
+            passkeys.removeIf(p -> p.getId().equals(added.getId()));
+            if (replaced != null && passkeys.stream().noneMatch(p -> p.getId().equals(replaced.getId()))) {
+                passkeys.add(replaced);
+            }
+            return passkeys;
+        });
+    }
+
+    private void modifyPasskeys(UnaryOperator<List<Passkey>> operation) throws Exception {
+        modify(blob -> {
+            PasswordBlob copy = new PasswordBlob();
+            copy.setPasswords(new ArrayList<>(blob.getPasswords()));
+            copy.setPasskeys(operation.apply(new ArrayList<>(blob.getPasskeys())));
             return copy;
         });
     }
@@ -89,7 +144,12 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
                 return i;
             }
         }
-        throw new IllegalStateException("Entry is not part of this store: " + entry.getName());
+        // a reload replaced the instances: an unchanged entry is still the same
+        int equal = entries.indexOf(entry);
+        if (equal >= 0) {
+            return equal;
+        }
+        throw new IllegalStateException("“" + entry.getName() + "” was changed or deleted meanwhile");
     }
 
     private static PasswordEntry entry(String name, String value) {

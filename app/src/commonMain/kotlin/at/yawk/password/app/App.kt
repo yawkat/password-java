@@ -104,6 +104,7 @@ fun App(
 ) {
     val state by viewModel.state.collectAsState()
     val otpState by otpViewModel.state.collectAsState()
+    val passkeyRequest by viewModel.passkeyRequest.collectAsState()
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         Surface(Modifier.fillMaxSize()) {
             // Not rememberSaveable, so the password never ends up in saved instance state. The field is cleared (with
@@ -111,25 +112,81 @@ fun App(
             val password = remember(state is UiState.Unlocked) { TextFieldState() }
             // keep clear of the system bars, cutouts and the soft keyboard (Android; no insets on desktop)
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                // the 2FA vault is opened from the unlock screen, and replaces it until it is closed
-                if (otpState != OtpState.Closed) {
+                // the 2FA vault is opened from the unlock screen, and replaces it until it is closed, or while a
+                // passkey request needs the password database
+                if (otpState != OtpState.Closed && passkeyRequest == null) {
                     OtpApp(otpState, otpViewModel, clipboard, hooks, touchInput)
                     return@Box
                 }
                 val openOtp = { config: AppConfig -> otpViewModel.open(config) }
                 when (val s = state) {
-                    is UiState.Locked ->
-                        UnlockScreen(s.config, s.error, busy = false, password, viewModel, hooks, touchInput, onExit, openOtp)
-                    is UiState.Unlocking ->
-                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp)
+                    is UiState.Locked -> UnlockScreen(
+                        s.config, s.error, busy = false, password, viewModel, hooks, touchInput, onExit, openOtp,
+                        passkeyRequest,
+                    )
+                    is UiState.Unlocking -> UnlockScreen(
+                        s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp,
+                        passkeyRequest,
+                    )
                     is UiState.ConfirmCreate -> {
-                        UnlockScreen(s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp)
+                        UnlockScreen(
+                            s.config, null, busy = true, password, viewModel, hooks, touchInput, onExit, openOtp,
+                            passkeyRequest,
+                        )
                         CreateDatabaseDialog(s.config, viewModel, hooks)
                     }
                     is UiState.Unlocked -> {
                         MainScreen(s, viewModel.screenState, viewModel, clipboard, hooks, touchInput)
+                        passkeyRequest?.let { PasskeyRequestDialog(it, s, viewModel) }
                     }
                     is UiState.Error -> ErrorScreen(s.message, onExit)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The screens of a passkey request from another app (Android's credential manager): the unlock screen, then the
+ * request ([PasswordViewModel.passkeyRequest]) once there is one. [onCancel] closes it.
+ */
+@Composable
+fun PasskeyApp(viewModel: PasswordViewModel, hooks: WindowHooks, onCancel: () -> Unit) {
+    val state by viewModel.state.collectAsState()
+    val passkeyRequest by viewModel.passkeyRequest.collectAsState()
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+        Surface(Modifier.fillMaxSize()) {
+            val password = remember(state is UiState.Unlocked) { TextFieldState() }
+            Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                when (val s = state) {
+                    is UiState.Locked -> UnlockScreen(
+                        s.config, s.error, busy = false, password, viewModel, hooks, touchInput = true, onCancel,
+                        onOpenOtp = null, passkeyRequest,
+                    )
+                    is UiState.Unlocking -> UnlockScreen(
+                        s.config, null, busy = true, password, viewModel, hooks, touchInput = true, onCancel,
+                        onOpenOtp = null, passkeyRequest,
+                    )
+                    is UiState.ConfirmCreate -> {
+                        UnlockScreen(
+                            s.config, null, busy = true, password, viewModel, hooks, touchInput = true, onCancel,
+                            onOpenOtp = null, passkeyRequest,
+                        )
+                        CreateDatabaseDialog(s.config, viewModel, hooks)
+                    }
+                    is UiState.Unlocked -> {
+                        val request = passkeyRequest
+                        if (request != null) {
+                            PasskeyRequestDialog(request, s, viewModel)
+                        } else {
+                            // saving, or about to be closed
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                LinearProgressIndicator(Modifier.widthIn(max = 240.dp).fillMaxWidth())
+                            }
+                        }
+                        s.error?.let { MessageDialog(it.title, it.text, onDismiss = onCancel) }
+                    }
+                    is UiState.Error -> ErrorScreen(s.message, onCancel)
                 }
             }
         }
@@ -146,8 +203,10 @@ private fun UnlockScreen(
     hooks: WindowHooks,
     touchInput: Boolean,
     onExit: () -> Unit,
-    /** Open the 2FA vault on the server of the given configuration */
-    onOpenOtp: (AppConfig) -> Unit,
+    /** Open the 2FA vault on the server of the given configuration, `null` for no 2FA button */
+    onOpenOtp: ((AppConfig) -> Unit)?,
+    /** A passkey request that waits for the unlock */
+    passkeyRequest: PasskeyRequest? = null,
 ) {
     // Typed into local state, as text fields need, and copied to the view model, so that it survives a trip to the 2FA
     // codes (the screen starts with the view model's copy)
@@ -185,6 +244,9 @@ private fun UnlockScreen(
             contentAlignment = Alignment.Center,
         ) {
             Column(Modifier.widthIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (passkeyRequest != null) {
+                    PasskeyRequestBanner(passkeyRequest, viewModel)
+                }
                 Text("Unlock password database", style = MaterialTheme.typography.headlineSmall)
                 OutlinedTextField(
                     value = url,
@@ -229,13 +291,15 @@ private fun UnlockScreen(
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                     // the 2FA vault has its own password: open it without the master password
-                    TextButton(
-                        onClick = {
-                            password.clearSecret()
-                            onOpenOtp(config.copy(url = viewModel.effectiveUrl(url)))
-                        },
-                        enabled = !busy,
-                    ) { Text("2FA codes") }
+                    if (onOpenOtp != null) {
+                        TextButton(
+                            onClick = {
+                                password.clearSecret()
+                                onOpenOtp(config.copy(url = viewModel.effectiveUrl(url)))
+                            },
+                            enabled = !busy,
+                        ) { Text("2FA codes") }
+                    }
                     Spacer(Modifier.weight(1f))
                     // Android apps are left with the back or home button
                     if (!touchInput) {

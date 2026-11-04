@@ -7,6 +7,11 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.LocalStorageProvider
 import at.yawk.password.MemoryStorageProvider
 import at.yawk.password.client.PasswordClient
+import at.yawk.password.passkey.PasskeyAuthenticator
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -15,7 +20,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -401,6 +408,169 @@ class PasswordViewModelTest {
         platform.configError = IllegalStateException("broken")
         val vm = newViewModel()
         assertTrue(vm.await<UiState.Error>().message.contains("broken"))
+    }
+
+    private fun PasswordViewModel.awaitPasskeyRequest(): PasskeyRequest = runBlocking {
+        withTimeout(10_000) { passkeyRequest.first { it != null }!! }
+    }
+
+    /**
+     * Ask [request] in the background, as the security key does.
+     */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun PasswordViewModel.ask(request: PasskeyRequest) =
+        GlobalScope.async(Dispatchers.Default, start = CoroutineStart.DEFAULT) { handlePasskeyRequest(request) }
+
+    @Test
+    fun staleCopyIsReloadedBeforeSaving() {
+        createDatabase("secret", "entry" to "pw")
+        val main = newViewModel()
+        main.await<UiState.Locked>()
+        main.unlock(server.url, "secret")
+        main.awaitIdle()
+
+        // the main view model hears of a change while busy, so it can't reload right away
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val saving = main.save(null, "a", "1")
+        Thread.sleep(200)
+        main.markStale()
+        server.uploadGate = null
+        gate.countDown()
+        assertNotNull(runBlocking { saving.await() })
+        main.awaitIdle()
+
+        // another one (Android's passkey activity) saves a passkey
+        val other = newViewModel()
+        other.await<UiState.Locked>()
+        other.unlock(server.url, "secret")
+        other.awaitIdle()
+        val passkey = PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0)
+        val create = PasskeyRequest.Create(passkey, emptyList())
+        val created = other.ask(create)
+        other.awaitPasskeyRequest()
+        other.answerPasskeyRequest(create, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Created, runBlocking { created.await() })
+
+        // the next save of the main one reloads first, and keeps the passkey
+        assertNotNull(runBlocking { main.save(null, "b", "2").await() })
+        val saved = main.awaitIdle()
+        assertEquals(listOf(passkey), saved.passkeys)
+        assertEquals(listOf("entry", "a", "b"), saved.entries.map { it.name })
+    }
+
+    @Test
+    fun passkeyCancelledWhileSaving() {
+        createDatabase("secret", "entry" to "pw")
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        vm.awaitIdle()
+        val old = PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0)
+        val first = PasskeyRequest.Create(old, emptyList())
+        val created = vm.ask(first)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(first, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Created, runBlocking { created.await() })
+        vm.awaitIdle()
+
+        // a new passkey for the same account replaces the old one, but the caller gives up while it is saved
+        val replacing = PasskeyRequest.Create(
+            PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0),
+            emptyList(),
+        )
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.uploadGate = gate
+        val cancelled = vm.ask(replacing)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(replacing, PasskeyAnswer.Approve())
+        Thread.sleep(500)
+        cancelled.cancel()
+        server.uploadGate = null
+        gate.countDown()
+        runBlocking { cancelled.join() }
+        // the old passkey is back
+        assertEquals(listOf(old), vm.awaitIdle().passkeys)
+        platform.storage = MemoryStorageProvider()
+        val reopened = newViewModel()
+        reopened.await<UiState.Locked>()
+        reopened.unlock(server.url, "secret")
+        assertEquals(listOf(old), reopened.awaitIdle().passkeys)
+    }
+
+    @Test
+    fun passkeyRequests() {
+        createDatabase("secret", "entry" to "pw")
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        assertNull(vm.unlockedPasskeys())
+
+        // a request waits for the unlock
+        val passkey = PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "Alice", 0)
+        val create = PasskeyRequest.Create(passkey, emptyList())
+        val created = vm.ask(create)
+        assertSame(create, vm.awaitPasskeyRequest())
+        // approving needs the database
+        vm.answerPasskeyRequest(create, PasskeyAnswer.Approve())
+        vm.unlock(server.url, "secret")
+        vm.awaitIdle()
+        assertFalse(created.isCompleted)
+        assertEquals(emptyList(), vm.unlockedPasskeys())
+        // another request is refused while one waits
+        assertEquals(PasskeyOutcome.Denied, runBlocking { vm.handlePasskeyRequest(PasskeyRequest.Get("a", emptyList())) })
+
+        vm.answerPasskeyRequest(create, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Created, runBlocking { created.await() })
+        assertNull(vm.passkeyRequest.value)
+        val saved = vm.awaitIdle()
+        assertEquals(listOf(passkey), saved.passkeys)
+        assertEquals(listOf("entry"), saved.entries.map { it.name })
+        assertEquals("Saved a passkey for alice at example.com", saved.status?.text)
+
+        // the same credential again is excluded
+        val again = PasskeyRequest.Create(
+            PasskeyAuthenticator.create("example.com", byteArrayOf(2), "bob", "", 0),
+            listOf(PasskeyAuthenticator.credentialId(passkey)),
+        )
+        val excluded = vm.ask(again)
+        assertSame(again, vm.awaitPasskeyRequest())
+        vm.answerPasskeyRequest(again, PasskeyAnswer.Dismiss)
+        assertEquals(PasskeyOutcome.Excluded, runBlocking { excluded.await() })
+
+        // signing in
+        val get = PasskeyRequest.Get("example.com", emptyList())
+        val chosen = vm.ask(get)
+        assertSame(get, vm.awaitPasskeyRequest())
+        // not one of the candidates
+        vm.answerPasskeyRequest(get, PasskeyAnswer.Approve(PasskeyAuthenticator.create("example.com", byteArrayOf(1), "", "", 0)))
+        assertEquals(PasskeyOutcome.Denied, runBlocking { chosen.await() })
+        val chosenAgain = vm.ask(get)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(get, PasskeyAnswer.Approve(saved.passkeys.single()))
+        assertSame(saved.passkeys.single(), (runBlocking { chosenAgain.await() } as PasskeyOutcome.Chosen).passkey)
+
+        val none = PasskeyRequest.Get("example.org", emptyList())
+        val noCredentials = vm.ask(none)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(none, PasskeyAnswer.Dismiss)
+        assertEquals(PasskeyOutcome.NoCredentials, runBlocking { noCredentials.await() })
+
+        // cancelling withdraws the request
+        val cancelled = vm.ask(get)
+        vm.awaitPasskeyRequest()
+        runBlocking { cancelled.cancelAndJoin() }
+        runBlocking { withTimeout(10_000) { vm.passkeyRequest.first { it == null } } }
+
+        // the passkey is in the database, and deleting it works
+        platform.storage = MemoryStorageProvider()
+        val reopened = newViewModel()
+        reopened.await<UiState.Locked>()
+        reopened.unlock(server.url, "secret")
+        val loaded = reopened.awaitIdle()
+        assertEquals(listOf(passkey), loaded.passkeys)
+        assertTrue(runBlocking { reopened.deletePasskey(loaded.passkeys.single()).await() })
+        assertEquals(emptyList(), reopened.awaitIdle().passkeys)
+        assertEquals(listOf("entry"), reopened.awaitIdle().entries.map { it.name })
     }
 
     private fun createDatabase(password: String, vararg entries: Pair<String, String>) {

@@ -1,5 +1,6 @@
 package at.yawk.password.app
 
+import at.yawk.password.model.Passkey
 import at.yawk.password.model.PasswordEntry
 
 sealed interface UiState {
@@ -28,6 +29,7 @@ sealed interface UiState {
      * @property offlineSaveConfirmed The user agreed to overwrite the server copy with the (offline) local copy.
      * @property status Transient status bar message.
      * @property error Error to show in a dialog until [PasswordViewModel.dismissError].
+     * @property passkeys Passkeys in database order, compared by identity like [entries].
      */
     data class Unlocked(
         val entries: List<PasswordEntry>,
@@ -36,11 +38,13 @@ sealed interface UiState {
         val offlineSaveConfirmed: Boolean = false,
         val status: StatusMessage? = null,
         val error: ErrorMessage? = null,
+        val passkeys: List<Passkey> = emptyList(),
     ) : UiState {
         // The entry list is compared by identity: an equal list of other entry objects (e.g. after a reload) is a
         // different state, because the store only accepts its own objects. StateFlow would otherwise drop the update.
         override fun equals(other: Any?) = other is Unlocked &&
             entries === other.entries &&
+            passkeys === other.passkeys &&
             fromLocalStorage == other.fromLocalStorage &&
             busy == other.busy &&
             offlineSaveConfirmed == other.offlineSaveConfirmed &&

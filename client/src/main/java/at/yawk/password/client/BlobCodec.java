@@ -5,6 +5,7 @@ import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import javax.crypto.AEADBadTagException;
@@ -109,7 +110,11 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
-            return objectMapper.readerFor(decryptedType(objectMapper, dataClass)).readValue(plaintext, 4, length);
+            try {
+                return objectMapper.readerFor(decryptedType(objectMapper, dataClass)).readValue(plaintext, 4, length);
+            } catch (IOException e) {
+                throw new UnreadableDatabaseException(e);
+            }
         } finally {
             Arrays.fill(key, (byte) 0);
             if (plaintext != null) {

@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Passwords</string>
+    <!-- where the credential manager offers to save a passkey -->
+    <string name="passkey_account">Password database</string>
+    <!-- the credential manager's entry while the database is locked -->
+    <string name="passkey_unlock">Unlock the password database</string>
 </resources>
