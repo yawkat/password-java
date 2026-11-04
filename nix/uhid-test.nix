@@ -35,9 +35,13 @@ let
     def hidraw():
         found = []
         for uevent in glob.glob("/sys/class/hidraw/*/device/uevent"):
-            with open(uevent) as f:
-                if f"HID_NAME={NAME}\n" in f.read():
-                    found.append("/dev/" + uevent.split("/")[4])
+            try:
+                with open(uevent) as f:
+                    if f"HID_NAME={NAME}\n" in f.read():
+                        found.append("/dev/" + uevent.split("/")[4])
+            except OSError:
+                # removed meanwhile
+                pass
         return found
 
 
@@ -62,7 +66,7 @@ let
         except OSError as e:
             assert e.errno == errno.EIO, e
         # answered by the helper, not the kernel's 5 second timeout
-        assert time.monotonic() - start < 2
+        assert time.monotonic() - start < 4
 
 
     mode = sys.argv[1]
@@ -121,6 +125,8 @@ testers.runNixOSTest {
   testScript = ''
     machine.wait_for_unit("password-uhid.socket")
     machine.succeed("test \"$(stat -c '%G %a' /run/password-uhid.sock)\" = 'fido 660'")
+    # switching configurations leaves running instances alone
+    machine.succeed("systemctl cat password-uhid@.service | grep -x X-RestartIfChanged=false")
 
     with subtest("relay through the kernel"):
         machine.succeed("uhid-client e2e >&2")

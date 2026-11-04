@@ -44,5 +44,8 @@ in
       wantedBy = [ "sockets.target" ];
       socketConfig.SocketGroup = cfg.group;
     };
+    # A running instance is an app's security key, and can't be started again without its connection: don't remove
+    # the key when switching to a configuration with another helper. The next connection gets the new one.
+    systemd.services."password-uhid@".restartIfChanged = false;
   };
 }

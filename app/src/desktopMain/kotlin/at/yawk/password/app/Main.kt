@@ -96,7 +96,8 @@ fun main() {
 /**
  * Create the security key if the configuration asks for it.
  *
- * @return The key, or `null` if it is disabled or could not be created (then [onError] was called)
+ * @return The key, or `null` if it is disabled or could not be created (then [onError] was called). [onError] is also
+ * called if the key stops working later.
  */
 private fun startSecurityKey(
     platform: DesktopPlatform,
@@ -104,7 +105,12 @@ private fun startSecurityKey(
     onError: (String) -> Unit,
 ): SecurityKey? = try {
     if (platform.securityKeyEnabled()) {
-        SecurityKey.start(viewModel::handlePasskeyRequest, viewModel::unlockedPasskeys)
+        SecurityKey.start(viewModel::handlePasskeyRequest, viewModel::unlockedPasskeys) { e ->
+            onError(
+                "The security key for passkeys stopped working: ${e.message ?: e}\n\n" +
+                    "Restart the app to create it again.",
+            )
+        }
     } else {
         null
     }

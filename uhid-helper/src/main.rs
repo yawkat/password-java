@@ -148,17 +148,12 @@ fn handle_kernel_event(event: &Event) -> Action {
     }
 }
 
-/// Write an event in one write: the kernel takes each write as an event of its own, and always all of it
+/// Write an event in one write: the kernel takes each write as an event of its own, and always all of it. The kernel
+/// only rejects our events when the device is gone or broken, so any failure ends the helper.
 fn write_event(mut device: impl Write, event: &Event) -> io::Result<()> {
-    match device.write(event) {
-        Ok(EVENT_SIZE) => Ok(()),
-        Ok(n) => Err(io::Error::other(format!("short write to uhid: {n}"))),
-        // The kernel rejects some events depending on the device's state (e.g. input after UHID_STOP). That leaves
-        // the device as it was, so it isn't fatal.
-        Err(e) => {
-            eprintln!("write to uhid: {e}");
-            Ok(())
-        }
+    match device.write(event)? {
+        EVENT_SIZE => Ok(()),
+        n => Err(io::Error::other(format!("short write to uhid: {n}"))),
     }
 }
 
@@ -200,11 +195,8 @@ fn device_to_client(mut device: impl Read + Write, mut client: impl Write) -> io
 }
 
 fn open_device(path: &Path) -> io::Result<File> {
-    let mut device = OpenOptions::new().read(true).write(true).open(path)?;
-    let written = device.write(&create_event()[..])?;
-    if written != EVENT_SIZE {
-        return Err(io::Error::other(format!("short write to uhid: {written}")));
-    }
+    let device = OpenOptions::new().read(true).write(true).open(path)?;
+    write_event(&device, &create_event())?;
     Ok(device)
 }
 

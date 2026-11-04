@@ -9,6 +9,8 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.deleteRecursively
@@ -18,6 +20,8 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -95,6 +99,26 @@ class UhidHelperTest {
             // the helper ended the connection
             assertFailsWith<EOFException> { uhid.read() }
         }
+    }
+
+    @Test
+    fun securityKeyReportsLostHelper() {
+        val failed = CompletableFuture<IOException>()
+        val helper = fakeHelper(0)
+        SecurityKey.start({ error("unused") }, { null }, socket, failed::complete).use {
+            helper.join()
+            assertIs<EOFException>(failed.get(5, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
+    fun securityKeyCloseIsNoFailure() {
+        val failed = CompletableFuture<IOException>()
+        val helper = fakeHelper(0) { channel -> readFully(channel, 1) }
+        SecurityKey.start({ error("unused") }, { null }, socket, failed::complete).close()
+        helper.join()
+        Thread.sleep(100)
+        assertFalse(failed.isDone)
     }
 
     @Test
