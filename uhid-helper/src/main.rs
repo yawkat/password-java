@@ -124,7 +124,7 @@ enum Action {
     Output([u8; REPORT_SIZE]),
     /// Write this reply to the kernel
     Reply(Box<Event>),
-    /// Nothing: START, STOP, OPEN, CLOSE, and output reports of the wrong size
+    /// Nothing: START, STOP, OPEN, CLOSE, and output reports of the wrong size or without the report number
     Ignore,
 }
 
@@ -137,7 +137,6 @@ fn handle_kernel_event(event: &Event) -> Action {
             // the descriptor has no report IDs, so hidraw puts a 0 for the report number in front
             let report = match data {
                 [0, report @ ..] if report.len() == REPORT_SIZE => report,
-                report if report.len() == REPORT_SIZE => report,
                 _ => return Action::Ignore,
             };
             Action::Output(report.try_into().unwrap())
@@ -379,11 +378,11 @@ mod tests {
     #[test]
     fn output() {
         let report: [u8; 64] = std::array::from_fn(|i| i as u8 + 1);
-        // with hidraw's report number in front, or without
+        // with hidraw's report number in front
         assert_eq!(handle_kernel_event(&output_event(&[&[0], &report[..]].concat())), Action::Output(report));
-        assert_eq!(handle_kernel_event(&output_event(&report)), Action::Output(report));
-        // other sizes are ignored
-        assert_eq!(handle_kernel_event(&output_event(&report[..63])), Action::Ignore);
+        // anything else is ignored
+        assert_eq!(handle_kernel_event(&output_event(&report)), Action::Ignore);
+        assert_eq!(handle_kernel_event(&output_event(&[&[0], &report[..63]].concat())), Action::Ignore);
         assert_eq!(handle_kernel_event(&output_event(&[&[1], &report[..]].concat())), Action::Ignore);
         assert_eq!(handle_kernel_event(&output_event(&[0; 66])), Action::Ignore);
         // a size beyond the data isn't trusted
@@ -417,8 +416,10 @@ mod tests {
 
     #[test]
     fn kernel_events() {
+        let mut output = [3; 65];
+        output[0] = 0;
         let mut device = Device {
-            events: vec![new_event(2), output_event(&[3; 64]), request_event(UHID_GET_REPORT, 9), new_event(4)],
+            events: vec![new_event(2), output_event(&output), request_event(UHID_GET_REPORT, 9), new_event(4)],
             written: Vec::new(),
         };
         let mut client = Vec::new();

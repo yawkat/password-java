@@ -305,12 +305,13 @@ securityKey=true
 Creating the device takes `/dev/uhid` (the `uhid` kernel module). That isn't something to give the app's user:
 `/dev/uhid` is not specific to security keys. Whoever opens it chooses what the device is, so it can just as well
 create a keyboard or a mouse, whose input goes to whatever session, login screen or text console is active on the
-machine. Instead, a `password-uhid` ([`uhid-helper/`](uhid-helper/), Rust without `unsafe` or dependencies), opens `/dev/uhid` and
-creates the security key for the app, and nothing else. The app never talks to `/dev/uhid`: it
-exchanges bare 64-byte reports with the helper over `/run/password-uhid.sock`, and the helper builds every event it
-gives the kernel itself, from the fixed name and report descriptor and the app's input reports. It doesn't hand out
-`/dev/uhid` either, because the kernel lets the holder remove the device and create another one. The device is
-removed when the app closes the connection. The app needs the helper; there is no way to use `/dev/uhid` directly.
+machine. Instead, a small helper, `password-uhid` ([`uhid-helper/`](uhid-helper/), Rust without `unsafe` or
+dependencies), opens `/dev/uhid` and creates the security key for the app, and nothing else. The app never talks to
+`/dev/uhid`: it exchanges bare 64-byte reports with the helper over `/run/password-uhid.sock`, and the helper builds
+every event it gives the kernel itself, from the fixed name and report descriptor and the app's input reports. It
+doesn't hand out `/dev/uhid` either, because the kernel lets the holder remove the device and create another one. The
+device is removed when the app closes the connection. The app needs the helper; there is no way to use `/dev/uhid`
+directly.
 
 The helper runs as a systemd socket-activated service, one instance per connection, as root without any
 capabilities and sandboxed to `/dev/uhid`. Who may connect is set by the socket's group, `password-uhid`. Only add the
