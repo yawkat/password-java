@@ -110,10 +110,14 @@ fn client_to_device(mut client: impl Read, mut device: impl Write) -> io::Result
         match event_type(&event) {
             UHID_DESTROY => return Ok(()),
             t if client_event_allowed(t) => {
-                // The kernel rejects some events depending on the device's state (e.g. input after UHID_STOP), as it
-                // would for the app with direct access. That leaves the device as it was, so it isn't fatal.
-                if let Err(e) = device.write_all(&event[..]) {
-                    eprintln!("write to uhid: {e}");
+                // One write per event, never write_all: the kernel takes each write as an event of its own, so the
+                // rest of a short write would be one whose type the client chose. The kernel always takes all of it.
+                match device.write(&event[..]) {
+                    Ok(EVENT_SIZE) => {}
+                    Ok(n) => return Err(io::Error::other(format!("short write to uhid: {n}"))),
+                    // The kernel rejects some events depending on the device's state (e.g. input after UHID_STOP), as
+                    // it would for the app with direct access. That leaves the device as it was, so it isn't fatal.
+                    Err(e) => eprintln!("write to uhid: {e}"),
                 }
             }
             t => {
@@ -265,6 +269,31 @@ mod tests {
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
             assert_eq!(device, event(UHID_INPUT2, 0), "event {t}");
         }
+    }
+
+    /// Takes at most `limit` bytes per write
+    struct ShortWrites(Vec<u8>, usize);
+
+    impl Write for ShortWrites {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let len = buf.len().min(self.1);
+            self.0.extend_from_slice(&buf[..len]);
+            Ok(len)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn short_write_ends() {
+        // the rest is never written as an event of its own
+        let mut sent = event(UHID_INPUT2, 0);
+        sent[100..104].copy_from_slice(&UHID_CREATE2.to_ne_bytes());
+        let mut device = ShortWrites(Vec::new(), 100);
+        client_to_device(Cursor::new(&sent), &mut device).unwrap_err();
+        assert_eq!(device.0, sent[..100]);
     }
 
     #[test]
