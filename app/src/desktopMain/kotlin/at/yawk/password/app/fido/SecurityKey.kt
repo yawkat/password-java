@@ -15,23 +15,18 @@ import org.slf4j.LoggerFactory
 private val log = LoggerFactory.getLogger(SecurityKey::class.java)
 
 /**
- * The passkeys of the password database as a USB security key that browsers can use: a virtual HID device ([Uhid])
- * speaking CTAPHID ([CtapHid]) and CTAP2 ([Ctap2]). Linux only.
+ * The passkeys of the password database as a USB security key that browsers can use: a virtual HID device
+ * ([UhidHelper]) speaking CTAPHID ([CtapHid]) and CTAP2 ([Ctap2]). Linux only.
  */
-class SecurityKey private constructor(private val uhid: Uhid, ctap2: Ctap2) : Closeable {
+class SecurityKey private constructor(private val device: UhidHelper, ctap2: Ctap2) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val hid = CtapHid(uhid::sendInput, scope, ctap2::process)
+    private val hid = CtapHid(device::sendInput, scope, ctap2::process)
     private val reader = Thread(::readLoop, "security-key").apply { isDaemon = true }
 
     private fun readLoop() {
         try {
             while (true) {
-                when (val event = uhid.read()) {
-                    is Uhid.Event.Output -> hid.onReport(event.data)
-                    is Uhid.Event.GetReport -> uhid.replyGetReport(event.id)
-                    is Uhid.Event.SetReport -> uhid.replySetReport(event.id)
-                    is Uhid.Event.Other -> log.debug("uhid event {}", event.type)
-                }
+                hid.onReport(device.read())
             }
         } catch (e: ClosedChannelException) {
             // closed
@@ -42,21 +37,20 @@ class SecurityKey private constructor(private val uhid: Uhid, ctap2: Ctap2) : Cl
 
     override fun close() {
         scope.cancel()
-        uhid.close()
+        device.close()
     }
 
     companion object {
         /**
          * Create the device and start answering it.
          *
-         * @throws IOException if the device can't be created, e.g. without the helper or access to `/dev/uhid`
+         * @throws IOException if the device can't be created, e.g. without the `password-uhid` helper
          */
         fun start(
             handler: suspend (PasskeyRequest) -> PasskeyOutcome,
             unlockedPasskeys: () -> List<Passkey>?,
         ): SecurityKey {
-            val uhid = Uhid.createSecurityKey()
-            val key = SecurityKey(uhid, Ctap2(handler, unlockedPasskeys))
+            val key = SecurityKey(UhidHelper.connect(), Ctap2(handler, unlockedPasskeys))
             key.reader.start()
             log.info("Security key created")
             return key

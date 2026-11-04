@@ -8,19 +8,17 @@
 
 let
   # uhid-client MODE: connects to the helper as the app would. MODE "e2e" also plays the browser through hidraw
-  # (which needs root), "destroy" just creates the device and removes it again.
+  # (which needs root), "close" just creates the device and removes it again.
   uhid-client = writeScriptBin "uhid-client" ''
     #!${python3}/bin/python3
+    import errno
+    import fcntl
     import glob
     import os
     import socket
-    import struct
     import sys
     import time
 
-    EVENT_SIZE = 4380
-    UHID_START, UHID_OPEN, UHID_OUTPUT = 2, 4, 6
-    UHID_DESTROY, UHID_CREATE2, UHID_INPUT2 = 1, 11, 12
     NAME = "password-java security key"
 
 
@@ -32,23 +30,6 @@ let
                 raise EOFError(f"closed after {len(data)} bytes")
             data += chunk
         return data
-
-
-    def recv_event(s):
-        event = recv_exact(s, EVENT_SIZE)
-        return struct.unpack_from("=I", event)[0], event
-
-
-    def wait_for_event(s, wanted):
-        while True:
-            t, event = recv_event(s)
-            print("event", t)
-            if t == wanted:
-                return event
-
-
-    def send_event(s, t, body=b""):
-        s.sendall((struct.pack("=I", t) + body).ljust(EVENT_SIZE, b"\0"))
 
 
     def hidraw():
@@ -68,49 +49,52 @@ let
         raise TimeoutError()
 
 
-    def closed(s):
+    def feature_ioctl(nr, size):
+        # _IOC(_IOC_READ | _IOC_WRITE, 'H', nr, size)
+        return (3 << 30) | (size << 16) | (ord("H") << 8) | nr
+
+
+    def assert_refused(fd, nr):
+        start = time.monotonic()
         try:
-            while True:
-                t, _ = recv_event(s)
-                print("event", t)
-        except EOFError:
-            pass
+            fcntl.ioctl(fd, feature_ioctl(nr, 65), bytearray(65))
+            raise AssertionError("feature report request succeeded")
+        except OSError as e:
+            assert e.errno == errno.EIO, e
+        # answered by the helper, not the kernel's 5 second timeout
+        assert time.monotonic() - start < 2
 
 
     mode = sys.argv[1]
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect("/run/password-uhid.sock")
     assert recv_exact(s, 1) == b"\0", "status"
-    wait_for_event(s, UHID_START)
     wait_for(lambda: len(hidraw()) == 1)
     device = hidraw()[0]
     print("device", device)
 
     if mode == "e2e":
         fd = os.open(device, os.O_RDWR)
-        wait_for_event(s, UHID_OPEN)
         # an output report from the "browser": a 0 for the report number, then 64 bytes
         report = bytes(range(64))
         os.write(fd, b"\0" + report)
-        event = wait_for_event(s, UHID_OUTPUT)
-        size = struct.unpack_from("=H", event, 4 + 4096)[0]
-        assert event[4:4 + size] == b"\0" + report, event[4:4 + size]
+        assert recv_exact(s, 64) == report
+        # one of the wrong size is dropped
+        os.write(fd, b"\0" + bytes(10))
+        os.write(fd, b"\0" + bytes(reversed(report)))
+        assert recv_exact(s, 64) == bytes(reversed(report))
         # the answer: an input report
-        answer = bytes(reversed(range(64)))
-        send_event(s, UHID_INPUT2, struct.pack("=H", 64) + answer)
+        answer = bytes([7] * 64)
+        s.sendall(answer)
         assert os.read(fd, 64) == answer
+        # feature reports (HIDIOCSFEATURE, HIDIOCGFEATURE) are refused
+        assert_refused(fd, 6)
+        assert_refused(fd, 7)
         os.close(fd)
-        # creating a device of our own is refused, and ends this one
-        create = bytearray(EVENT_SIZE - 4)
-        create[0:8] = b"keyboard"
-        send_event(s, UHID_CREATE2, bytes(create))
-        closed(s)
-    elif mode == "destroy":
-        send_event(s, UHID_DESTROY)
-        closed(s)
-    else:
+    elif mode != "close":
         raise ValueError(mode)
 
+    s.close()
     wait_for(lambda: not hidraw())
     print("device removed")
   '';
@@ -142,12 +126,12 @@ testers.runNixOSTest {
         machine.succeed("uhid-client e2e >&2")
 
     with subtest("a member of the group can create the key"):
-        machine.succeed("su alice -c 'uhid-client destroy' >&2")
+        machine.succeed("su alice -c 'uhid-client close' >&2")
         # the user still can't open /dev/uhid itself
         machine.fail("su alice -c 'test -w /dev/uhid'")
 
     with subtest("others can't"):
-        out = machine.fail("su bob -c 'uhid-client destroy' 2>&1")
+        out = machine.fail("su bob -c 'uhid-client close' 2>&1")
         assert "PermissionError" in out, out
 
     with subtest("no instances are left behind"):

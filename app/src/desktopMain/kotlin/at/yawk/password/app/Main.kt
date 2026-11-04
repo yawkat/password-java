@@ -54,7 +54,7 @@ fun main() {
             val passkeyRequest by viewModel.passkeyRequest.collectAsState()
             var securityKeyError by remember { mutableStateOf<String?>(null) }
             LaunchedEffect(viewModel) {
-                // reading the configuration and opening /dev/uhid block, so not on the EDT
+                // reading the configuration and connecting to the helper block, so not on the EDT
                 var key: SecurityKey? = null
                 try {
                     withContext(Dispatchers.IO) {
@@ -112,7 +112,7 @@ private fun startSecurityKey(
     log.warn("Could not create the security key", e)
     onError(
         "Could not create the security key for passkeys: ${e.message ?: e}\n\n" +
-            "It needs the password-uhid helper, or read and write access to /dev/uhid, see the README.",
+            "It needs the password-uhid helper, see the README.",
     )
     null
 }
