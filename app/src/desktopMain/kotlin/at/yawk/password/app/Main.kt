@@ -112,7 +112,7 @@ private fun startSecurityKey(
     log.warn("Could not create the security key", e)
     onError(
         "Could not create the security key for passkeys: ${e.message ?: e}\n\n" +
-            "It needs read and write access to /dev/uhid, see the README.",
+            "It needs the password-uhid helper, or read and write access to /dev/uhid, see the README.",
     )
     null
 }

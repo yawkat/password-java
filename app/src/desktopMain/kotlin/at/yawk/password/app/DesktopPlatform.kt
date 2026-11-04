@@ -46,7 +46,8 @@ class DesktopPlatform(
     }
 
     /**
-     * Whether to create the virtual security key (key `securityKey`), off by default: it needs access to `/dev/uhid`.
+     * Whether to create the virtual security key (key `securityKey`), off by default: it needs the
+     * `password-uhid` helper or access to `/dev/uhid`.
      */
     fun securityKeyEnabled(): Boolean = readProperties().getProperty("securityKey")?.trim() == "true"
 

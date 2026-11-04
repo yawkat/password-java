@@ -302,33 +302,56 @@ driver. Enable it in `config.properties`:
 securityKey=true
 ```
 
-The app needs read and write access to `/dev/uhid` (the `uhid` kernel module, `modprobe uhid`). Note what that
-grants: `/dev/uhid` is not specific to security keys. Whoever opens it chooses what the device is, so it can just as
-well create a keyboard or a mouse, whose input goes to whatever session, login screen or text console is active on the
-machine. The vault isn't affected, but don't hand this out more widely than needed.
+Creating the device takes `/dev/uhid` (the `uhid` kernel module). That isn't something to give the app's user:
+`/dev/uhid` is not specific to security keys. Whoever opens it chooses what the device is, so it can just as well
+create a keyboard or a mouse, whose input goes to whatever session, login screen or text console is active on the machine. Instead, a
+small helper, `password-uhid` ([`uhid-helper/`](uhid-helper/), Rust without `unsafe` or dependencies), opens
+`/dev/uhid` and creates the security key for the app, and nothing else: the device's name and report descriptor are
+fixed, and of the app's messages it only passes on the answers of a device (input reports and replies to report
+requests). It doesn't hand out `/dev/uhid` itself, because the kernel lets the holder remove the device and create
+another one. The device is removed when the app closes the connection. The app uses the helper when its socket,
+`/run/password-uhid.sock`, exists.
 
-Prefer giving access only to the user logged in at the seat, as for a real security key (`uaccess`). The rule must
-come before systemd's `73-seat-late.rules`:
-
-```
-# /etc/udev/rules.d/70-uhid.rules
-KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"
-```
-
-On NixOS (`services.udev.extraRules` would end up in `99-local.rules`, too late for `uaccess`):
+The helper runs as a systemd socket-activated service, one instance per connection, as root without any
+capabilities and sandboxed to `/dev/uhid`. Who may connect is set by the socket's group, `users` by default. A member
+can plug in a security key even while someone else is at the seat, but it can only be a security key, which browsers
+only use with that person's consent. On NixOS, with this repository's flake as an input:
 
 ```nix
-boot.kernelModules = [ "uhid" ];
-services.udev.packages = [
-  (pkgs.writeTextDir "lib/udev/rules.d/70-uhid.rules" ''
-    KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"
-  '')
-];
+imports = [ password-java.nixosModules.default ];
+services.password-uhid.enable = true;
+# services.password-uhid.group = "users";
 ```
 
-This still lets every process of that user open the device while they are logged in at the seat, and the app keeps
-the device it opened after switching users. A static group (`GROUP="uhid", MODE="0660"`) is worse: it also covers SSH
-sessions, cron jobs and `systemd --user` services of every member, whether or not they are at the seat.
+Elsewhere, build it and install the units from `uhid-helper/` (edit `SocketGroup=` in `password-uhid.socket` first if
+your desktop users aren't in `users`):
+
+```bash
+cargo build --release --manifest-path uhid-helper/Cargo.toml
+```
+
+```bash
+sudo install -Dm755 uhid-helper/target/release/password-uhid /usr/local/bin/password-uhid
+```
+
+```bash
+sudo install -Dm644 -t /etc/systemd/system uhid-helper/password-uhid.socket uhid-helper/password-uhid@.service
+```
+
+```bash
+echo uhid | sudo tee /etc/modules-load.d/uhid.conf && sudo modprobe uhid
+```
+
+```bash
+sudo systemctl enable --now password-uhid.socket
+```
+
+Without the helper's socket, the app falls back to opening `/dev/uhid` directly. If you do give a user access to it,
+give it only to the user logged in at the seat, as for a real security key (`uaccess`, in a rule that comes before
+systemd's `73-seat-late.rules`, e.g. `/etc/udev/rules.d/70-uhid.rules` with
+`KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"`), not through a static group, which also covers SSH sessions, cron
+jobs and `systemd --user` services. Even then, every process of that user can create any HID device while they are at
+the seat.
 
 Browsers open the key's `hidraw` device, which systemd's `fido_id` recognizes as a security key and gives to the
 logged-in user, like a real one. While the app runs, the key is plugged in. A browser request brings the app's window
@@ -347,9 +370,10 @@ The flake supports `x86_64-linux` and `aarch64-linux`.
 ```sh
 nix build .#server   # result/bin/password-server, takes the same -p and -d options
 nix build .#app      # result/bin/password-gui, x86_64-linux only
+nix build .#uhid-helper # result/bin/password-uhid and its systemd units, the security key helper
 nix run              # the default package: app on x86_64-linux, server elsewhere
 nix develop          # shell with JDK 25 and Gradle
-nix flake check -L   # builds everything except the Android app, runs the Gradle tests and a NixOS VM test of the module
+nix flake check -L   # builds everything except the Android app, runs the Gradle and helper tests and NixOS VM tests
 ```
 
 ### Using the flake from a NixOS configuration
@@ -400,6 +424,7 @@ home.packages = [ inputs.password-java.packages.${pkgs.stdenv.hostPlatform.syste
 ```
 
 It installs `password-gui` and a desktop entry.
+For its security key, enable `services.password-uhid` as well, see [Desktop: security key (Linux)](#desktop-security-key-linux).
 
 ### Updating `nix/deps.json`
 

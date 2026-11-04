@@ -6,7 +6,6 @@ import at.yawk.password.model.Passkey
 import java.io.Closeable
 import java.io.IOException
 import java.nio.channels.ClosedChannelException
-import java.nio.file.Path
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,14 +49,13 @@ class SecurityKey private constructor(private val uhid: Uhid, ctap2: Ctap2) : Cl
         /**
          * Create the device and start answering it.
          *
-         * @throws IOException if the device can't be created, e.g. without access to `/dev/uhid`
+         * @throws IOException if the device can't be created, e.g. without the helper or access to `/dev/uhid`
          */
         fun start(
             handler: suspend (PasskeyRequest) -> PasskeyOutcome,
             unlockedPasskeys: () -> List<Passkey>?,
-            path: Path = Path.of(Uhid.DEFAULT_PATH),
         ): SecurityKey {
-            val uhid = Uhid.createSecurityKey("password-java security key", path)
+            val uhid = Uhid.createSecurityKey()
             val key = SecurityKey(uhid, Ctap2(handler, unlockedPasskeys))
             key.reader.start()
             log.info("Security key created")

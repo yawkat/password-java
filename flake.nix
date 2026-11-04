@@ -19,19 +19,25 @@
         let
           password-jars = pkgs.callPackage ./nix/package.nix { };
           server = pkgs.callPackage ./nix/server.nix { inherit password-jars; };
+          uhid-helper = pkgs.callPackage ./nix/uhid-helper.nix { };
           # the desktop app only exists where password-jars builds it (x86_64-linux)
           app = lib.optionalAttrs password-jars.withApp {
             app = pkgs.callPackage ./nix/app.nix { inherit password-jars; };
           };
         in
         {
-          inherit password-jars server;
+          inherit password-jars server uhid-helper;
           default = app.app or server;
         }
         // app
       );
 
-      nixosModules.default = import ./nix/module.nix { inherit self; };
+      nixosModules.default = {
+        imports = [
+          (import ./nix/module.nix { inherit self; })
+          (import ./nix/uhid-module.nix { inherit self; })
+        ];
+      };
 
       checks = forAllSystems (
         pkgs:
@@ -39,8 +45,9 @@
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
         in
         {
-          inherit (packages) password-jars server;
+          inherit (packages) password-jars server uhid-helper;
           nixos = pkgs.callPackage ./nix/nixos-test.nix { inherit self; };
+          uhid = pkgs.callPackage ./nix/uhid-test.nix { inherit self; };
         }
         // lib.optionalAttrs (packages ? app) { inherit (packages) app; }
       );
