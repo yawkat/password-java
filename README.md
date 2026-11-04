@@ -313,18 +313,20 @@ another one. The device is removed when the app closes the connection. The app u
 `/run/password-uhid.sock`, exists.
 
 The helper runs as a systemd socket-activated service, one instance per connection, as root without any
-capabilities and sandboxed to `/dev/uhid`. Who may connect is set by the socket's group, `users` by default. A member
-can plug in a security key even while someone else is at the seat, but it can only be a security key, which browsers
-only use with that person's consent. On NixOS, with this repository's flake as an input:
+capabilities and sandboxed to `/dev/uhid`. Who may connect is set by the socket's group, `password-uhid`. Only add the
+users who sit at the machine: the key a member plugs in is given to whoever is at the seat, as a real one would be,
+even when the member is someone else (over SSH, say). Such a key can't type or click, but it can answer for itself:
+when the person at the seat registers a passkey, a browser takes the first key that answers, so another member's
+key could get the passkey, and with it a way to sign in to that account. On NixOS, with this repository's flake as an
+input:
 
 ```nix
 imports = [ password-java.nixosModules.default ];
 services.password-uhid.enable = true;
-# services.password-uhid.group = "users";
+users.users.alice.extraGroups = [ "password-uhid" ];
 ```
 
-Elsewhere, build it and install the units from `uhid-helper/` (edit `SocketGroup=` in `password-uhid.socket` first if
-your desktop users aren't in `users`):
+Elsewhere, build it, install the units from `uhid-helper/` and add the group:
 
 ```bash
 cargo build --release --manifest-path uhid-helper/Cargo.toml
@@ -340,6 +342,10 @@ sudo install -Dm644 -t /etc/systemd/system uhid-helper/password-uhid.socket uhid
 
 ```bash
 echo uhid | sudo tee /etc/modules-load.d/uhid.conf && sudo modprobe uhid
+```
+
+```bash
+sudo groupadd --system password-uhid && sudo usermod -aG password-uhid "$USER"
 ```
 
 ```bash

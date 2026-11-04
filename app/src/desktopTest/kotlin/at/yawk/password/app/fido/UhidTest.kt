@@ -6,6 +6,7 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
@@ -133,6 +134,18 @@ class UhidTest {
         assertEquals(Uhid.UHID_DESTROY, received[1].getInt(0))
         assertTrue((4 until Uhid.EVENT_SIZE).all { received[1].get(it) == 0.toByte() })
         assertTrue(Files.notExists(device))
+    }
+
+    @Test
+    fun closeAfterHelperEnds() {
+        val socket = dir.resolve("helper.sock")
+        // the helper ends the connection as soon as it gets DESTROY
+        val helper = fakeHelper(socket, 0) { channel -> readEvent(channel) }
+        val uhid = Uhid.createSecurityKey(socket, dir.resolve("missing"))
+        uhid.close()
+        helper.join()
+        // a normal end, not a failure
+        assertFailsWith<ClosedChannelException> { uhid.read() }
     }
 
     @Test

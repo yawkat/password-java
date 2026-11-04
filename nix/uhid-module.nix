@@ -26,10 +26,11 @@ in
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "users";
+      default = "password-uhid";
       description = ''
         Group allowed to connect to the helper, and so to create the security key. Each connection
-        creates one device, until it is closed.
+        creates one device, until it is closed. The device is given to whoever is at the seat, so
+        only add the users who sit there. Created automatically if left at the default.
       '';
     };
   };
@@ -38,6 +39,7 @@ in
     boot.kernelModules = [ "uhid" ];
     # the units come with the package (uhid-helper/password-uhid.socket and password-uhid@.service)
     systemd.packages = [ cfg.package ];
+    users.groups = lib.mkIf (cfg.group == "password-uhid") { password-uhid = { }; };
     systemd.sockets.password-uhid = {
       wantedBy = [ "sockets.target" ];
       socketConfig.SocketGroup = cfg.group;

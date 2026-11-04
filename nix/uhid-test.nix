@@ -120,19 +120,23 @@ testers.runNixOSTest {
 
   nodes.machine = {
     imports = [ self.nixosModules.default ];
-    services.password-uhid.enable = true;
-    environment.systemPackages = [ uhid-client ];
-    users.users.alice.isNormalUser = true;
-    users.users.bob = {
-      isNormalUser = true;
-      group = "bob";
+    services.password-uhid = {
+      enable = true;
+      group = "fido";
     };
-    users.groups.bob = { };
+    environment.systemPackages = [ uhid-client ];
+    users.users.alice = {
+      isNormalUser = true;
+      extraGroups = [ "fido" ];
+    };
+    # in "users", the default group of NixOS users, but not in "fido"
+    users.users.bob.isNormalUser = true;
+    users.groups.fido = { };
   };
 
   testScript = ''
     machine.wait_for_unit("password-uhid.socket")
-    machine.succeed("test \"$(stat -c '%G %a' /run/password-uhid.sock)\" = 'users 660'")
+    machine.succeed("test \"$(stat -c '%G %a' /run/password-uhid.sock)\" = 'fido 660'")
 
     with subtest("relay through the kernel"):
         machine.succeed("uhid-client e2e >&2")

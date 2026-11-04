@@ -7,12 +7,16 @@ import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.ByteChannel
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.FileChannel
+import java.nio.channels.SelectionKey
+import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A virtual HID device of Linux's uhid driver (`/dev/uhid`, see the kernel's `Documentation/hid/uhid.rst`): the kernel
@@ -28,6 +32,10 @@ import java.nio.file.StandardOpenOption
 class Uhid private constructor(private val channel: ByteChannel) : Closeable {
     private val writeBuffer = ByteBuffer.allocateDirect(EVENT_SIZE).order(ByteOrder.nativeOrder())
     private val readBuffer = ByteBuffer.allocateDirect(EVENT_SIZE).order(ByteOrder.nativeOrder())
+
+    /** Set by [close]: the helper may end the connection as soon as it gets UHID_DESTROY, before we close it */
+    @Volatile
+    private var closing = false
 
     sealed interface Event {
         /** An output report from the host, without the report number */
@@ -52,6 +60,7 @@ class Uhid private constructor(private val channel: ByteChannel) : Closeable {
         // /dev/uhid returns an event per read, the helper's socket may return less
         while (buffer.hasRemaining()) {
             if (channel.read(buffer) < 0) {
+                if (closing) throw ClosedChannelException()
                 throw EOFException("The security key's device is gone")
             }
         }
@@ -123,6 +132,7 @@ class Uhid private constructor(private val channel: ByteChannel) : Closeable {
      * Remove the device.
      */
     override fun close() {
+        closing = true
         try {
             synchronized(this) { write(UHID_DESTROY) {} }
         } catch (e: IOException) {
@@ -137,6 +147,8 @@ class Uhid private constructor(private val channel: ByteChannel) : Closeable {
 
         /** The socket of the `password-uhid` helper (`uhid-helper/password-uhid.socket`) */
         const val HELPER_SOCKET = "/run/password-uhid.sock"
+
+        private val HELPER_TIMEOUT = 10.seconds
 
         /** The name of the device, the same as the helper's */
         const val DEVICE_NAME = "password-java security key"
@@ -175,13 +187,25 @@ class Uhid private constructor(private val channel: ByteChannel) : Closeable {
         private fun connectHelper(socket: Path): Uhid {
             val channel = SocketChannel.open(UnixDomainSocketAddress.of(socket))
             try {
-                // one byte first: 0 if the device was created, otherwise the helper's errno
+                // one byte first: 0 if the device was created, otherwise the helper's errno. Don't wait forever if
+                // the helper doesn't start.
                 val status = ByteBuffer.allocate(1)
-                while (status.hasRemaining()) {
-                    if (channel.read(status) < 0) {
-                        throw EOFException("The security key helper at $socket closed the connection")
+                channel.configureBlocking(false)
+                Selector.open().use { selector ->
+                    channel.register(selector, SelectionKey.OP_READ)
+                    val deadline = System.nanoTime() + HELPER_TIMEOUT.inWholeNanoseconds
+                    while (status.hasRemaining()) {
+                        val remaining = (deadline - System.nanoTime()) / 1_000_000
+                        if (remaining <= 0) {
+                            throw IOException("The security key helper at $socket did not answer")
+                        }
+                        selector.select(remaining)
+                        if (channel.read(status) < 0) {
+                            throw EOFException("The security key helper at $socket closed the connection")
+                        }
                     }
                 }
+                channel.configureBlocking(true)
                 val errno = status.get(0).toInt() and 0xff
                 if (errno != 0) {
                     throw IOException("The security key helper at $socket could not create the device (errno $errno)")
