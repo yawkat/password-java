@@ -187,13 +187,13 @@
   "com/google/errorprone#error_prone_parent/2.27.0": {
    "pom": "sha256-+oGCnQSVWd9pJ/nJpv1rvQn4tQ5tRzaucsgwC2w9dlQ="
   },
-  "io/freefair/gradle#lombok-plugin/9.8.2": {
-   "jar": "sha256-kNu5XD+SnsFsehZvvTWP6n5zswxFo057Obgk/lS4Xag=",
-   "module": "sha256-X8S2c2+xaPKJ5PFYGazsdwOEkpQUy4pSqtqsmU1tMb8=",
-   "pom": "sha256-z49/4D4/H7xdN4kBIxg5UwZ9LnZN9IQgZ9m397qo7+M="
+  "io/freefair/gradle#lombok-plugin/9.8.3": {
+   "jar": "sha256-AmTQDi8QMzupHs1sESvPGm0toI57kyvy62MffKr/PQA=",
+   "module": "sha256-XziypBeLd71BhW0bjSfTdEt6u1Vb9ThnUVH9+/1Gt9k=",
+   "pom": "sha256-S18pK/X2xP8F4ygkUnusfGOn8hh0fXoMPuqSsdpPFbE="
   },
-  "io/freefair/lombok#io.freefair.lombok.gradle.plugin/9.8.2": {
-   "pom": "sha256-IjUfNr/XhgQ5IZpX+0i0U2YYKOUFLuULzkTpfDykb8E="
+  "io/freefair/lombok#io.freefair.lombok.gradle.plugin/9.8.3": {
+   "pom": "sha256-TN1t2zE0TZ43G5KHPI9owW808QT6bvpDNijmrTlS7YE="
   },
   "io/micronaut/gradle#micronaut-minimal-plugin/5.0.2": {
    "jar": "sha256-DRQx6XudG0uM9h3givQF3852CZOMst6Yv1b/0s4BMD4=",
