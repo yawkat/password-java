@@ -11,7 +11,7 @@ compose-material3 = "1.9.0"
 androidx-lifecycle = "2.11.0"
 kotlinx-coroutines = "1.11.0"
 # Android Gradle Plugin. It is only put on the build classpath when the Android build is enabled, see build.gradle.kts.
-agp = "9.5.0"
+agp = "9.5.1"
 androidx-activity = "1.13.0"
 # the passkey provider of the Android app (Android 14 and later)
 androidx-credentials = "1.6.0"
