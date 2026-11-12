@@ -806,7 +806,8 @@ private fun AccountDetail(
         }
         Button(onClick = onCopy, enabled = code != null) { Text("Copy code") }
         Text(
-            "${account.algorithm} · ${account.digits} digits · every ${account.period} s",
+            // null when a newer version wrote an algorithm this one doesn't know
+            "${account.algorithm ?: "Unknown algorithm"} · ${account.digits} digits · every ${account.period} s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -13,6 +13,7 @@ import java.util.Map;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 /**
@@ -193,6 +194,61 @@ public class ProtocolTest {
         Assert.assertEquals(loaded.getValue(), data("new"));
         // a device without local copy can't tell
         Assert.assertEquals(client(new MemoryStorageProvider(), PASSWORD).load().getValue(), data("old"));
+    }
+
+    @Test
+    public void testNewerLocalCopyOffline() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        PasswordClient client = client(storage, PASSWORD);
+        client.load();
+        client.save(data("old"));
+
+        // a newer app on this device saved locally, then this one was installed again
+        KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(storage.load()));
+        DecryptedBlob<Map<String, Object>> newer = new DecryptedBlob<>();
+        newer.setData(Map.of("passwords", List.of(), "future", 1));
+        newer.setRevision(5);
+        newer.setMinWriterVersion(PasswordBlob.VERSIONS.getWriter() + 1);
+        storage.save(BlobCodec.encrypt(new ObjectMapper(), keys, newer));
+
+        PasswordClient offline = new PasswordClient("http://127.0.0.1:1", storage, PASSWORD);
+        ClientValue<PasswordBlob> loaded = offline.load();
+        Assert.assertEquals(loaded.getLocalReason(), ClientValue.LocalReason.SERVER_UNAVAILABLE);
+        Assert.assertTrue(loaded.isReadOnly());
+        Assert.expectThrows(ReadOnlyDatabaseException.class, () -> offline.save(data("mine")));
+    }
+
+    @DataProvider
+    public Object[][] unreadableLocalRevisions() {
+        return new Object[][]{{5L, true}, {1L, false}};
+    }
+
+    @Test(dataProvider = "unreadableLocalRevisions")
+    public void testUnreadableLocalCopy(long localRevision, boolean refused) throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        PasswordClient client = client(storage, PASSWORD);
+        client.load();
+        client.save(data("a"));
+        client.save(data("b"));
+
+        // a newer app saved the local copy, with a newer reader version (the server copy is at revision 2)
+        KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(storage.load()));
+        DecryptedBlob<PasswordBlob> newer = new DecryptedBlob<>();
+        newer.setData(data("newer"));
+        newer.setRevision(localRevision);
+        newer.setMinReaderVersion(PasswordBlob.VERSIONS.getReader() + 1);
+        byte[] local = BlobCodec.encrypt(new ObjectMapper(), keys, newer);
+        storage.save(local);
+
+        if (refused) {
+            // replacing it with the server copy would lose what the server doesn't have
+            Assert.expectThrows(UnreadableDatabaseException.class, () -> client(storage, PASSWORD).load());
+            Assert.assertEquals(storage.load(), local);
+        } else {
+            // older than the server copy: nothing to lose
+            Assert.assertEquals(client(storage, PASSWORD).load().getValue(), data("b"));
+            Assert.assertNotEquals(storage.load(), local);
+        }
     }
 
     @Test

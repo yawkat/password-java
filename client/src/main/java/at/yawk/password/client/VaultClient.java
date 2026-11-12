@@ -196,6 +196,13 @@ public class VaultClient<T> {
             DecryptedBlob<T> localBlob = null;
             try {
                 localBlob = BlobCodec.decrypt(objectMapper, keys, local, dataClass, versions);
+            } catch (UnreadableDatabaseException e) {
+                // a newer version of the app saved the local copy (and was downgraded since): replacing it would lose
+                // what the server doesn't have yet
+                if (e.revision > remoteBlob.getRevision()) {
+                    throw e;
+                }
+                log.warn("Could not read the local copy, replacing it with the server copy, which is not older", e);
             } catch (Exception e) {
                 log.warn("Could not decrypt the local copy, replacing it with the server copy", e);
             }
@@ -233,7 +240,7 @@ public class VaultClient<T> {
      * Whether a newer client saved {@code blob}: this one can only show it, saving would drop what it doesn't know.
      */
     private boolean isNewer(DecryptedBlob<T> blob) {
-        return blob.getMinWriterVersion() > versions.getWriter();
+        return BlobCodec.isNewerWriter(blob.getMinWriterVersion(), versions);
     }
 
     private DecryptedBlob<T> decryptLocal(byte[] local) throws Exception {

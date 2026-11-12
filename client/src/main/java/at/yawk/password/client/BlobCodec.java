@@ -7,6 +7,7 @@ import at.yawk.password.model.SchemaVersions;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
@@ -119,24 +120,29 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
-            DecryptedBlob<T> decrypted;
+            JsonNode tree;
+            Versions versions;
             try {
+                tree = objectMapper.readTree(plaintext, 4, length);
                 // the versions first, to know how to read the rest
-                Versions versions = objectMapper.readerFor(Versions.class).readValue(plaintext, 4, length);
-                if (versions.minReaderVersion > known.getReader()) {
-                    throw new UnreadableDatabaseException("reader version " + versions.minReaderVersion);
-                }
-                ObjectReader reader = objectMapper.readerFor(decryptedType(objectMapper, dataClass));
-                if (versions.minWriterVersion > known.getWriter()) {
-                    // read-only (see VaultClient): show what this client knows
-                    reader = reader.without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                            .with(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL);
-                }
-                decrypted = reader.readValue(plaintext, 4, length);
+                versions = objectMapper.readerFor(Versions.class).readValue(tree);
             } catch (IOException e) {
-                throw new UnreadableDatabaseException(e);
+                throw new UnreadableDatabaseException(e, -1);
             }
-            return decrypted;
+            if (versions.minReaderVersion > known.getReader()) {
+                throw new UnreadableDatabaseException("reader version " + versions.minReaderVersion, versions.revision);
+            }
+            ObjectReader reader = objectMapper.readerFor(decryptedType(objectMapper, dataClass));
+            if (isNewerWriter(versions.minWriterVersion, known)) {
+                // read-only (see VaultClient): show what this client knows
+                reader = reader.without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                        .with(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL);
+            }
+            try {
+                return reader.readValue(tree);
+            } catch (IOException e) {
+                throw new UnreadableDatabaseException(e, versions.revision);
+            }
         } finally {
             Arrays.fill(key, (byte) 0);
             if (plaintext != null) {
@@ -146,10 +152,19 @@ class BlobCodec {
     }
 
     /**
-     * The versions of a {@link DecryptedBlob}, read before the rest.
+     * Whether a client of a newer writer version saved a blob of {@code minWriterVersion}: this one reads it leniently,
+     * and must not save it, since that would drop what it skipped.
+     */
+    static boolean isNewerWriter(int minWriterVersion, SchemaVersions known) {
+        return minWriterVersion > known.getWriter();
+    }
+
+    /**
+     * The versions and revision of a {@link DecryptedBlob}, read before the rest.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static final class Versions {
+        public long revision;
         public int minReaderVersion;
         public int minWriterVersion;
     }

@@ -7,6 +7,10 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.LocalStorageProvider
 import at.yawk.password.MemoryStorageProvider
 import at.yawk.password.client.PasswordClient
+import at.yawk.password.client.VaultClient
+import at.yawk.password.client.VaultKey
+import at.yawk.password.model.PasswordBlob
+import at.yawk.password.model.SchemaVersions
 import at.yawk.password.passkey.PasskeyAuthenticator
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineStart
@@ -457,6 +461,37 @@ class PasswordViewModelTest {
         val saved = main.awaitIdle()
         assertEquals(listOf(passkey), saved.passkeys)
         assertEquals(listOf("entry", "a", "b"), saved.entries.map { it.name })
+    }
+
+    @Test
+    fun newerDatabaseIsReadOnly() {
+        createDatabase("secret", "entry" to "pw")
+        // a newer app saves a field that this one doesn't know, with a newer writer version
+        val newer = VaultClient(server.url, "", MemoryStorageProvider(), VaultKey.ofPassword("secret".toByteArray()),
+                                Map::class.java, SchemaVersions(0, PasswordBlob.VERSIONS.writer + 1))
+        newer.load()
+        newer.save(mapOf("passwords" to listOf(mapOf("name" to "entry", "value" to "pw")), "future" to 1))
+        val saved = server.db.get()
+
+        val vm = newViewModel()
+        vm.await<UiState.Locked>()
+        vm.unlock(server.url, "secret")
+        val unlocked = vm.awaitIdle()
+        assertTrue(unlocked.readOnly)
+        assertEquals(listOf("entry"), unlocked.entries.map { it.name })
+        assertNull(runBlocking { vm.save(null, "a", "1").await() })
+        assertEquals("Save failed", vm.awaitIdle().error?.title)
+        vm.dismissError()
+
+        // the dialog doesn't offer to approve, but an approval that comes anyway saves nothing
+        val create = PasskeyRequest.Create(PasskeyAuthenticator.create("example.com", byteArrayOf(1), "alice", "", 0),
+                                           emptyList())
+        val created = vm.ask(create)
+        vm.awaitPasskeyRequest()
+        vm.answerPasskeyRequest(create, PasskeyAnswer.Approve())
+        assertEquals(PasskeyOutcome.Failed, runBlocking { created.await() })
+        assertNull(vm.awaitIdle().error, "refused before saving")
+        assertContentEquals(saved, server.db.get(), "the newer database is untouched")
     }
 
     @Test
