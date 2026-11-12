@@ -13,6 +13,8 @@
     const NONCE_OFFSET = BLOB_SALT_OFFSET + 32;
     const HEADER_LENGTH = NONCE_OFFSET + 12;
     const TAG_LENGTH = 16;
+    // first byte of a payload with the schema versions header (BlobCodec.VERSIONS_MARKER)
+    const VERSIONS_MARKER = 1;
     // PKCS#8 encoding of an Ed25519 private key, followed by the 32-byte seed. WebCrypto can't import a raw seed.
     const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 
@@ -21,10 +23,14 @@
         passwords: {
             prefix: "", signedPath: "/db", passwordLabel: "Master password",
             empty: "The server has no password database yet",
+            // the highest minReaderVersion this page opens, the reader of PasswordBlob.VERSIONS
+            readerVersion: 0,
         },
         totp: {
             prefix: "totp/", signedPath: "/totp/db", passwordLabel: "Backup password (18-028)",
             empty: "The server has no 2FA codes yet",
+            // the reader of OtpBlob.VERSIONS
+            readerVersion: 0,
         },
     };
     // HMAC of a TOTP account (model/OtpAlgorithm.java)
@@ -165,7 +171,7 @@
     }
 
     // The blob format of SPEC.md, "Encrypted blob"
-    async function decrypt(keys, blob) {
+    async function decrypt(keys, blob, vault) {
         if (blob.length < HEADER_LENGTH + TAG_LENGTH || !equal(blob.subarray(0, 4), MAGIC)) {
             throw new Error("Invalid database: bad header");
         }
@@ -202,7 +208,21 @@
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Error("Invalid database: bad length");
             }
-            return JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length))).data;
+            // the schema versions header (BlobCodec.java), or the JSON alone in blobs written before it existed
+            let json = plaintext.subarray(4, 4 + length);
+            let minReaderVersion = 0;
+            if (json[0] === VERSIONS_MARKER && json.length >= 5) {
+                minReaderVersion = new DataView(json.buffer, json.byteOffset).getUint16(1);
+                json = json.subarray(5);
+            } else if (json[0] !== "{".charCodeAt(0)) {
+                throw new Error("The database was saved by a newer version of the app, which this page can't read");
+            }
+            // like the apps (SchemaVersions.java): a newer reader version marks changes that must not be ignored.
+            // Newer writer versions are fine, this page only reads and ignores what it doesn't know.
+            if (minReaderVersion > vault.readerVersion) {
+                throw new Error("The database was saved by a newer version of the app, which this page can't read");
+            }
+            return JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(json)).data;
         } finally {
             plaintext.fill(0);
         }
@@ -311,7 +331,7 @@
             onProgress("Fetching database…");
             const {blob, clockOffset} = await fetchDatabase(keys, vault);
             onProgress("Decrypting…");
-            const data = await decrypt(keys, blob);
+            const data = await decrypt(keys, blob, vault);
             return {
                 loaded: vault === VAULTS.totp ? await otpAccounts(data) : passwordEntries(data),
                 clockOffset,

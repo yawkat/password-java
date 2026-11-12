@@ -186,11 +186,17 @@ This is the body of `GET /db` and `PUT /db` and the content of the stored files.
 
 ```
 header     = "PWDB" ‖ version (1 byte, = 1) ‖ install_salt (32) ‖ blob_salt (32) ‖ nonce (12)
-plaintext  = len(json) (4 bytes) ‖ json ‖ zero bytes up to a multiple of 4096 bytes
+payload    = 0x01 ‖ minReaderVersion (2 bytes) ‖ minWriterVersion (2 bytes) ‖ json
+plaintext  = len(payload) (4 bytes) ‖ payload ‖ zero bytes up to a multiple of 4096 bytes
 blob       = header ‖ AES-256-GCM(key = blob_key, nonce, aad = header).encrypt(plaintext)    (with the 16-byte tag)
 ```
 
 - `json` is the UTF-8 JSON of the decrypted blob (below).
+- `minReaderVersion` and `minWriterVersion` are the [schema versions](#schema-versions) of `json`. They are before it,
+  rather than in it, because they decide how to read it.
+- Blobs written before the schema versions existed have `json` alone as the payload, which always starts with `{`:
+  clients read them as versions 0 and 0. Clients always write the header, so clients that predate it can't read what
+  newer clients save. A payload starting with any other byte is of a later format, and refused.
 - The padding hides the exact size of the database.
 - `blob_salt` and `nonce` are random for every save.
 - The whole header is authenticated. A wrong password and a modified blob both fail the GCM tag check, and can't be
@@ -294,9 +300,39 @@ The 2FA vault has the same `revision`, and `data` holds its accounts:
 | `data.accounts[].digits`         | integer | Code length, 6 to 10                                                 |
 | `data.accounts[].period`         | integer | Seconds per code, e.g. 30, or 10 for Authy's own tokens              |
 | `data.accounts[].backupCodes`    | string  | Free text: the account's backup codes and anything kept with them    |
+| `data.accounts[].favorite`       | boolean | Shown at the top of the list. Since writer version 1                 |
 
 The code at unix time `t` is the HOTP (RFC 4226) of the counter `floor(t / period)`, truncated to `digits` digits
-(RFC 6238). Clients reject a vault with unknown fields rather than drop them on the next save.
+(RFC 6238).
+
+### Schema versions
+
+Each vault has two schema versions of its own, so that a change to one vault doesn't affect the other: the password
+vault is at reader 0 and writer 0, the 2FA vault at reader 0 and writer 1 (`favorite`). They are in
+`PasswordBlob.VERSIONS` and `OtpBlob.VERSIONS`.
+
+- The **writer version** is raised with every change to the data, e.g. a new field or a new enum value.
+- The **reader version** is raised as well when even a client that only reads must not ignore the change, e.g.
+  anything that changes how a code is computed, what a secret means, or which relying party a passkey may be used
+  for: a client that ignored it would act wrongly rather than just show less.
+
+A client writes its own versions as `minReaderVersion` and `minWriterVersion` in the [blob](#encrypted-blob) on every
+save. When it loads data:
+
+- With a higher `minReaderVersion` than its reader version, it refuses to open it, as for an unknown protocol version.
+- Otherwise, with a higher `minWriterVersion` than its writer version, it opens it read-only: it skips the fields it
+  doesn't know, reads unknown enum values as missing, and refuses every save, since a save would drop what it skipped.
+  If it picks the local copy over such a server copy (`SERVER_COPY_OLDER`), that is read-only too.
+- A local copy that it can't read at all (a newer reader version, or data it doesn't know at its writer version) is
+  never replaced by the server copy: the app was downgraded since that copy was saved, and the server copy, which this
+  client can read, is not a later version of it. The local copy may hold what the server doesn't have, so loading
+  fails until the app is updated.
+- Otherwise, it reads the data strictly: a field it doesn't know is an error. So a change that forgot to raise the
+  writer version makes older clients refuse the data, rather than drop part of it on the next save.
+
+The data is authenticated with the vault's key, so the versions and any new fields come from another client of the
+same user, not from the server. A change of the format of `json` itself, e.g. to another encoding, raises the reader
+version too. The web client only reads, so it only checks the reader version.
 
 ## Client behaviour
 

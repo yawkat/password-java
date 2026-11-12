@@ -137,7 +137,7 @@ public class VerifyBeforeSaveTest {
             PasswordClient client = server.client(storage);
             client.load();
             client.save(data("new"));
-            DecryptedBlob<PasswordBlob> saved = BlobCodec.decrypt(new ObjectMapper(), KEYS, storage.load(), PasswordBlob.class);
+            DecryptedBlob<PasswordBlob> saved = BlobCodec.decrypt(new ObjectMapper(), KEYS, storage.load(), PasswordBlob.class, PasswordBlob.VERSIONS);
             Assert.assertEquals(saved.getRevision(), 42);
         }
     }

@@ -76,7 +76,8 @@ class DeviceCompatibilityTest {
             revision = 3
         }
         val encrypted = BlobCodec.encrypt(ObjectMapper(), keys, decrypted)
-        assertEquals(decrypted, BlobCodec.decrypt(ObjectMapper(), keys, encrypted, PasswordBlob::class.java))
+        assertEquals(decrypted, BlobCodec.decrypt(ObjectMapper(), keys, encrypted, PasswordBlob::class.java,
+                                                         PasswordBlob.VERSIONS))
     }
 
     @Test

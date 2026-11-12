@@ -17,8 +17,8 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class PasswordStore extends VaultStore<PasswordBlob> {
     private PasswordStore(VaultClient<PasswordBlob> client, PasswordBlob blob,
-                          @Nullable ClientValue.LocalReason localReason) {
-        super(client, blob, localReason);
+                          @Nullable ClientValue.LocalReason localReason, boolean readOnly) {
+        super(client, blob, localReason, readOnly);
     }
 
     /**
@@ -32,14 +32,14 @@ public final class PasswordStore extends VaultStore<PasswordBlob> {
         if (value.getValue() == null) {
             return null;
         }
-        return new PasswordStore(client, value.getValue(), value.getLocalReason());
+        return new PasswordStore(client, value.getValue(), value.getLocalReason(), value.isReadOnly());
     }
 
     /**
      * Create an empty store. Nothing is saved until the first modification.
      */
     public static PasswordStore createEmpty(PasswordClient client) {
-        return new PasswordStore(client, new PasswordBlob(), null);
+        return new PasswordStore(client, new PasswordBlob(), null, false);
     }
 
     @Override

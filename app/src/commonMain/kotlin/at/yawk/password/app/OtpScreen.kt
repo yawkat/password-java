@@ -69,6 +69,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -284,6 +286,8 @@ private fun OtpScreen(
     val clock = rememberClock()
     val latest by rememberUpdatedState(state)
     val busy = state.busy
+    // the store refuses to save a read-only vault anyway; this disables the actions that would
+    val editable = !busy && !state.readOnly
     val visible = remember(state.accounts, ui.query.text) { filterAccounts(state.accounts, ui.query.text) }
 
     // ---- actions ----
@@ -347,6 +351,11 @@ private fun OtpScreen(
         }
     }
 
+    fun toggleFavorite(account: OtpAccount) {
+        if (latest.busy) return
+        withOfflineConfirmation { viewModel.setFavorite(account, !account.isFavorite) }
+    }
+
     fun delete(account: OtpAccount) {
         withOfflineConfirmation {
             scope.launch {
@@ -397,7 +406,8 @@ private fun OtpScreen(
         when {
             ctrl && event.key == Key.L -> lock().let { true }
             ctrl && event.key == Key.F && ui.page == OtpPage.List -> searchFocus.requestFocus().let { true }
-            ctrl && event.key == Key.N && ui.page == OtpPage.List && !latest.busy -> ui.startEditing(null).let { true }
+            ctrl && event.key == Key.N && ui.page == OtpPage.List && !latest.busy && !latest.readOnly ->
+                ui.startEditing(null).let { true }
             event.key == Key.F5 && ui.page == OtpPage.List -> reload().let { true }
             event.key == Key.Escape && ui.page != OtpPage.List -> back().let { true }
             else -> false
@@ -438,14 +448,17 @@ private fun OtpScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { ui.startEditing(null) }, enabled = !busy) { Text("Add") }
-                    TextButton(onClick = { ui.startImport() }, enabled = !busy) { Text("Import") }
+                    TextButton(onClick = { ui.startEditing(null) }, enabled = editable) { Text("Add") }
+                    TextButton(onClick = { ui.startImport() }, enabled = editable) { Text("Import") }
                     TextButton(onClick = ::reload, enabled = !busy) { Text("Reload") }
                     TextButton(onClick = ::lock, enabled = !busy) { Text("Lock") }
                 }
                 HorizontalDivider()
                 if (state.localReason != null) {
                     OfflineBanner()
+                }
+                if (state.readOnly) {
+                    ReadOnlyBanner()
                 }
                 if (state.offerFingerprint) {
                     FingerprintOffer(
@@ -492,10 +505,20 @@ private fun OtpScreen(
                     SideEffect { ui.backToList() }
                 } else {
                     CompactBar(title = accountTitle(account), onBack = ::back) {
-                        TextButton(onClick = { ui.startEditing(account) }, enabled = !busy) { Text("Edit") }
+                        // only the star, so that the bar still fits on a phone
+                        TextButton(
+                            onClick = { toggleFavorite(account) },
+                            enabled = editable,
+                            modifier = Modifier.semantics {
+                                contentDescription = if (account.isFavorite) "Unfavorite" else "Favorite"
+                            },
+                        ) {
+                            Text(if (account.isFavorite) "★" else "☆", style = MaterialTheme.typography.titleLarge)
+                        }
+                        TextButton(onClick = { ui.startEditing(account) }, enabled = editable) { Text("Edit") }
                         TextButton(
                             onClick = { ui.dialog = OtpDialog.ConfirmDelete(account) },
-                            enabled = !busy,
+                            enabled = editable,
                         ) { Text("Delete") }
                     }
                     HorizontalDivider()
@@ -531,7 +554,7 @@ private fun OtpScreen(
                     backEnabled = !busy,
                 ) {
                     val valid = remember(ui.draft, page.id) { ui.draft.toAccount(page.id).isSuccess }
-                    Button(onClick = { save(page.id) }, enabled = !busy && valid) {
+                    Button(onClick = { save(page.id) }, enabled = editable && valid) {
                         Text("Save")
                     }
                 }
@@ -542,7 +565,7 @@ private fun OtpScreen(
                 val lines = remember(ui.importText, state.accounts) { parseImport(ui.importText, state.accounts) }
                 val accounts = lines.filter { it.account != null && it.duplicate == null }.map { it.account!! }
                 CompactBar(title = "Import", onBack = ::back, backEnabled = !busy) {
-                    Button(onClick = { import(accounts) }, enabled = !busy && accounts.isNotEmpty()) {
+                    Button(onClick = { import(accounts) }, enabled = editable && accounts.isNotEmpty()) {
                         Text("Import ${accounts.size}")
                     }
                 }
@@ -739,8 +762,9 @@ private fun AccountRow(account: OtpAccount, clock: () -> Long, onCopy: () -> Uni
         Avatar(account)
         Column(Modifier.weight(1f)) {
             val subtitle = accountSubtitle(account)
+            val name = if (subtitle.isEmpty()) accountTitle(account) else "${accountTitle(account)} · $subtitle"
             Text(
-                if (subtitle.isEmpty()) accountTitle(account) else "${accountTitle(account)} · $subtitle",
+                if (account.isFavorite) "★ $name" else name,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -782,7 +806,8 @@ private fun AccountDetail(
         }
         Button(onClick = onCopy, enabled = code != null) { Text("Copy code") }
         Text(
-            "${account.algorithm} · ${account.digits} digits · every ${account.period} s",
+            // null when a newer version wrote an algorithm this one doesn't know
+            "${account.algorithm ?: "Unknown algorithm"} · ${account.digits} digits · every ${account.period} s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -40,6 +40,8 @@ sealed interface OtpState {
      * @property error Error to show in a dialog until [OtpViewModel.dismissError].
      * @property offerFingerprint Offer [OtpViewModel.enableFingerprint]: the vault was opened with the password, on a
      * device that can keep a fingerprint key, and none is stored for this server.
+     * @property readOnly A newer version saved the vault, so it can't be saved (see
+     * `VaultStore.isReadOnly`).
      */
     data class Unlocked(
         val accounts: List<OtpAccount>,
@@ -48,6 +50,7 @@ sealed interface OtpState {
         val status: StatusMessage? = null,
         val error: ErrorMessage? = null,
         val offerFingerprint: Boolean = false,
+        val readOnly: Boolean = false,
     ) : OtpState {
         // compared by identity, like UiState.Unlocked: a reload gives equal but new account objects
         override fun equals(other: Any?) = other is Unlocked &&
@@ -56,7 +59,8 @@ sealed interface OtpState {
             busy == other.busy &&
             status == other.status &&
             error == other.error &&
-            offerFingerprint == other.offerFingerprint
+            offerFingerprint == other.offerFingerprint &&
+            readOnly == other.readOnly
 
         override fun hashCode() = System.identityHashCode(accounts)
     }

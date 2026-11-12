@@ -17,8 +17,9 @@ import org.jetbrains.annotations.Nullable;
  * @author yawkat
  */
 public final class OtpStore extends VaultStore<OtpBlob> {
-    private OtpStore(VaultClient<OtpBlob> client, OtpBlob blob, @Nullable ClientValue.LocalReason localReason) {
-        super(client, blob, localReason);
+    private OtpStore(VaultClient<OtpBlob> client, OtpBlob blob, @Nullable ClientValue.LocalReason localReason,
+                     boolean readOnly) {
+        super(client, blob, localReason, readOnly);
     }
 
     /**
@@ -32,14 +33,14 @@ public final class OtpStore extends VaultStore<OtpBlob> {
         if (value.getValue() == null) {
             return null;
         }
-        return new OtpStore(client, value.getValue(), value.getLocalReason());
+        return new OtpStore(client, value.getValue(), value.getLocalReason(), value.isReadOnly());
     }
 
     /**
      * Create an empty store. Nothing is saved until the first modification.
      */
     public static OtpStore createEmpty(VaultClient<OtpBlob> client) {
-        return new OtpStore(client, new OtpBlob(), null);
+        return new OtpStore(client, new OtpBlob(), null, false);
     }
 
     @Override

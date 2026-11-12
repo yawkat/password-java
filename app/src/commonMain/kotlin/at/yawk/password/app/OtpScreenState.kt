@@ -77,12 +77,12 @@ class OtpScreenState {
     }
 
     /**
-     * Fill in the editor from an `otpauth://` link, keeping the backup codes typed so far.
+     * Fill in the editor from an `otpauth://` link, keeping the backup codes typed so far and the favorite flag.
      */
     fun fillInFromUri(text: String) {
         OtpDraft.fromUri(text, draft.backupCodes).fold(
             onSuccess = {
-                draft = it
+                draft = it.copy(favorite = draft.favorite)
                 uri = ""
                 uriError = null
             },

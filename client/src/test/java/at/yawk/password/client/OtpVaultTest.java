@@ -4,11 +4,13 @@ import at.yawk.password.AuthProtocol;
 import at.yawk.password.HashUtil;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.MemoryStorageProvider;
+import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.OtpAccount;
 import at.yawk.password.model.OtpBlob;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import at.yawk.password.server.TestServer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -59,6 +61,20 @@ public class OtpVaultTest {
 
     private static List<String> issuers(OtpStore store) {
         return store.getAccounts().stream().map(OtpAccount::getIssuer).toList();
+    }
+
+    @Test
+    public void savesSchemaVersions() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        create(withPassword(storage)).add(account("A"));
+        byte[] saved = storage.load();
+        KeyMaterial keys = KeyMaterial.derive(BACKUP_PASSWORD, BlobCodec.installSalt(saved));
+        DecryptedBlob<OtpBlob> blob = BlobCodec.decrypt(new ObjectMapper(), keys, saved, OtpBlob.class,
+                                                        OtpBlob.VERSIONS);
+        Assert.assertEquals(blob.getMinReaderVersion(), OtpBlob.VERSIONS.getReader());
+        Assert.assertEquals(blob.getMinWriterVersion(), OtpBlob.VERSIONS.getWriter());
+        // the password vault keeps its own versions
+        Assert.assertEquals(PasswordBlob.VERSIONS.getWriter(), 0);
     }
 
     @Test

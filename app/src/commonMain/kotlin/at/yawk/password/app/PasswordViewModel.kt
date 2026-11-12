@@ -298,6 +298,7 @@ class PasswordViewModel(
             entries = store.entries,
             passkeys = store.passkeys,
             fromLocalStorage = store.isFromLocalStorage,
+            readOnly = store.isReadOnly,
             status = StatusMessage(urlSaveError ?: status),
         )
         urlSaveError = null
@@ -417,6 +418,8 @@ class PasswordViewModel(
                 is PasskeyRequest.Create -> when {
                     request.excluded(passkeys) != null -> PasskeyOutcome.Excluded
                     answered !is PasskeyAnswer.Approve -> PasskeyOutcome.Denied
+                    // the dialog doesn't offer to approve then, but the state may have changed since
+                    store.isReadOnly -> PasskeyOutcome.Failed
                     else -> {
                         val replaced = passkeys.firstOrNull {
                             it.rpId == request.passkey.rpId && it.userHandle == request.passkey.userHandle
@@ -547,6 +550,7 @@ class PasswordViewModel(
                             entries = store.entries,
                             passkeys = store.passkeys,
                             fromLocalStorage = store.isFromLocalStorage,
+                            readOnly = store.isReadOnly,
                             busy = false,
                             offlineSaveConfirmed = if (resetOfflineConfirmation) false else it.offlineSaveConfirmed,
                             status = StatusMessage(success(store)),

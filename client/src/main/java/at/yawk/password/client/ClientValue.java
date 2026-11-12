@@ -16,6 +16,11 @@ public class ClientValue<T> {
      * Why the value is the local copy rather than the server copy, or {@code null} if it is the server copy.
      */
     @Nullable private final LocalReason localReason;
+    /**
+     * Whether a client of a newer writer version saved the database: it can be shown, but saving it would
+     * drop what this client skipped, so {@link VaultClient#save} refuses.
+     */
+    private final boolean readOnly;
 
     public boolean isFromLocalStorage() {
         return localReason != null;

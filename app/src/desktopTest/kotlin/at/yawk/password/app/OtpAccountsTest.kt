@@ -52,6 +52,24 @@ class OtpAccountsTest {
         )
         assertEquals(listOf("a", "b"), filterAccounts(accounts, "HUB").map { it.label })
         assertEquals(listOf("zed"), filterAccounts(accounts, "ze").map { it.label })
+
+        val favorites = accounts.map { if (it.label == "zed" || it.label == "b") it.withFavorite(true) else it }
+        assertEquals(listOf("b", "zed", "", "a"), filterAccounts(favorites, "").map { it.label })
+        assertEquals(listOf("b", "a"), filterAccounts(favorites, "HUB").map { it.label })
+    }
+
+    @Test
+    fun withFavoriteKeepsFields() {
+        val account = account("GitHub", "me").apply {
+            algorithm = OtpAlgorithm.SHA256
+            digits = 7
+            period = 10
+            backupCodes = "codes"
+        }
+        val favorite = account.withFavorite(true)
+        assertTrue(favorite.isFavorite)
+        assertFalse(account.isFavorite, "the original is unchanged")
+        assertEquals(account, favorite.withFavorite(false))
     }
 
     @Test
@@ -97,6 +115,8 @@ class OtpAccountsTest {
         assertEquals("JBSWY3DPEHPK3PXP", account.secret)
         assertEquals(7, account.digits)
         assertEquals(draft.copy(secret = "JBSWY3DPEHPK3PXP"), OtpDraft.of(account))
+        // editing keeps a favorite a favorite
+        assertTrue(OtpDraft.of(account.withFavorite(true)).toAccount("some-id").getOrThrow().isFavorite)
 
         assertEquals("Missing secret", OtpDraft(issuer = "x").toAccount(null).exceptionOrNull()?.message)
         assertEquals("Invalid period", draft.copy(period = "x").toAccount(null).exceptionOrNull()?.message)
