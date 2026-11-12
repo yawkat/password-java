@@ -104,12 +104,13 @@ public class ProtocolTest {
         client.load();
         client.save(data("old"));
 
-        // a newer app saves a field that this one doesn't know
+        // a newer app saves a field that this one doesn't know, with a newer writer version
         byte[] local = storage.load();
         KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(local));
         DecryptedBlob<Map<String, Object>> newer = new DecryptedBlob<>();
         newer.setData(Map.of("passwords", List.of(), "future", 1));
         newer.setRevision(5);
+        newer.setMinWriterVersion(PasswordBlob.VERSIONS.getWriter() + 1);
         new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
 
         // shown read-only, rather than dropping the field on the next save
@@ -141,7 +142,7 @@ public class ProtocolTest {
         DecryptedBlob<PasswordBlob> newer = new DecryptedBlob<>();
         newer.setData(new PasswordBlob());
         newer.setRevision(5);
-        newer.setMinReaderVersion(DecryptedBlob.READER_VERSION + 1);
+        newer.setMinReaderVersion(PasswordBlob.VERSIONS.getReader() + 1);
         new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
 
         // refused, rather than falling back to the local copy and replacing the newer data with it
@@ -162,6 +163,7 @@ public class ProtocolTest {
         DecryptedBlob<Map<String, Object>> newer = new DecryptedBlob<>();
         newer.setData(Map.of("passwords", List.of(), "future", 1));
         newer.setRevision(5);
+        newer.setMinWriterVersion(PasswordBlob.VERSIONS.getWriter() + 1);
         new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
 
         // the local copy is shown, but saving it would replace the field on the server
@@ -207,7 +209,8 @@ public class ProtocolTest {
         // saving offline keeps the change locally
         Assert.expectThrows(IOException.class, () -> offline.save(data("b")));
         Assert.assertEquals(BlobCodec.decrypt(new ObjectMapper(), KeyMaterial.derive(
-                PASSWORD, BlobCodec.installSalt(storage.load())), storage.load(), PasswordBlob.class).getData(), data("b"));
+                PASSWORD, BlobCodec.installSalt(storage.load())), storage.load(), PasswordBlob.class,
+                PasswordBlob.VERSIONS).getData(), data("b"));
     }
 
     @Test

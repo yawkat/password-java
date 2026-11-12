@@ -228,7 +228,8 @@ N = 2^16, r = 8, p = 1, 32-byte key and salt).
 | `data.passwords[].value` | string          | Free text. By convention, the first line (up to `\n` or `\r`) is the password; the rest holds username, notes and so on. |
 | `data.passkeys`          | array           | Passkeys (below), in the order they were added. Left out while empty. |
 | `revision`               | integer         | Incremented by every save (0 in legacy blobs)                        |
-| `minReaderVersion`       | integer         | Clients that read a lower version refuse to open the database. Left out while 0. |
+| `minReaderVersion`       | integer         | Reader schema version, see [Schema versions](#schema-versions). Left out while 0. |
+| `minWriterVersion`       | integer         | Writer schema version, see [Schema versions](#schema-versions). Left out while 0. |
 
 A passkey (WebAuthn credential) in `data.passkeys`. Binary values are base64url without padding, as in WebAuthn's JSON:
 
@@ -295,25 +296,35 @@ The 2FA vault has the same `revision`, and `data` holds its accounts:
 | `data.accounts[].digits`         | integer | Code length, 6 to 10                                                 |
 | `data.accounts[].period`         | integer | Seconds per code, e.g. 30, or 10 for Authy's own tokens              |
 | `data.accounts[].backupCodes`    | string  | Free text: the account's backup codes and anything kept with them    |
-| `data.accounts[].favorite`       | boolean | Shown at the top of the list. Optional, left out while `false`       |
+| `data.accounts[].favorite`       | boolean | Shown at the top of the list. Since writer version 1                 |
 
 The code at unix time `t` is the HOTP (RFC 4226) of the counter `floor(t / period)`, truncated to `digits` digits
-(RFC 6238). `favorite` is left out while `false`, so that clients that predate it (which reject unknown fields) keep
-opening a vault without favorites.
+(RFC 6238).
 
-### New fields
+### Schema versions
 
-A client opens a database with fields it doesn't know (at any level) read-only: it shows the data, but refuses every
-save, since a save would drop those fields. This holds for every copy it might save over: if it picks the local copy
-over a server copy with unknown fields (`SERVER_COPY_OLDER`), that is read-only too. The data is authenticated with the
-vault's key, so unknown fields come from another client of the same user, not from the server.
+Each vault has two schema versions of its own, so that a change to one vault doesn't affect the other: the password
+vault is at reader 0 and writer 0, the 2FA vault at reader 0 and writer 1 (`favorite`). They are in
+`PasswordBlob.VERSIONS` and `OtpBlob.VERSIONS`.
 
-Some changes must not be ignored even by a client that only reads, e.g. anything that changes how a code is computed,
-what a secret means, or which relying party a passkey may be used for: a client that ignored such a field would act
-wrongly rather than just show less. Such a change raises the top-level `minReaderVersion`, and a client whose reader
-version (`DecryptedBlob.READER_VERSION`, currently 1) is lower refuses to open the database, as for an unknown protocol
-version. Other new fields, e.g. `favorite`, leave it alone. Clients older than reader version 1 reject any unknown
-field, including `minReaderVersion` itself.
+- The **writer version** is raised with every change to the data, e.g. a new field or a new enum value.
+- The **reader version** is raised as well when even a client that only reads must not ignore the change, e.g.
+  anything that changes how a code is computed, what a secret means, or which relying party a passkey may be used
+  for: a client that ignored it would act wrongly rather than just show less.
+
+A client writes its own versions as `minReaderVersion` and `minWriterVersion` on every save. When it loads data:
+
+- With a higher `minReaderVersion` than its reader version, it refuses to open it, as for an unknown protocol version.
+- Otherwise, with a higher `minWriterVersion` than its writer version, it opens it read-only: it skips the fields it
+  doesn't know, reads unknown enum values as missing, and refuses every save, since a save would drop what it skipped.
+  If it picks the local copy over such a server copy (`SERVER_COPY_OLDER`), that is read-only too.
+- Otherwise, it reads the data strictly: a field it doesn't know is an error. So a change that forgot to raise the
+  writer version makes older clients refuse the data, rather than drop part of it on the next save.
+
+The data is authenticated with the vault's key, so the versions and any new fields come from another client of the
+same user, not from the server. Clients that predate schema versions reject any unknown field, including the version
+fields themselves: they can't open a vault once a newer client saved it with a version above 0. The web client only
+reads, so it only checks the reader version.
 
 ## Client behaviour
 

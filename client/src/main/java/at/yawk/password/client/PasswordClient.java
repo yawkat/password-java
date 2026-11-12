@@ -22,7 +22,7 @@ public class PasswordClient extends VaultClient<PasswordBlob> {
      * used anymore.
      */
     public PasswordClient(String url, LocalStorageProvider localStorage, byte[] password) {
-        super(url, "", localStorage, VaultKey.ofPassword(password), PasswordBlob.class);
+        super(url, "", localStorage, VaultKey.ofPassword(password), PasswordBlob.class, PasswordBlob.VERSIONS);
         this.password = password;
     }
 

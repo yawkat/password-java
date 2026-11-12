@@ -40,7 +40,7 @@ sealed interface OtpState {
      * @property error Error to show in a dialog until [OtpViewModel.dismissError].
      * @property offerFingerprint Offer [OtpViewModel.enableFingerprint]: the vault was opened with the password, on a
      * device that can keep a fingerprint key, and none is stored for this server.
-     * @property readOnly The vault has fields that this version doesn't know, so it can't be saved (see
+     * @property readOnly A newer version saved the vault, so it can't be saved (see
      * `VaultStore.isReadOnly`).
      */
     data class Unlocked(

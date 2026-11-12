@@ -13,6 +13,8 @@ import org.jetbrains.annotations.Nullable;
  */
 @Data
 public class PasswordBlob {
+    public static final SchemaVersions VERSIONS = new SchemaVersions(0, 0);
+
     private List<PasswordEntry> passwords = new ArrayList<>();
     /**
      * Left out of the JSON while empty: clients that predate passkeys reject unknown fields, so they keep opening a

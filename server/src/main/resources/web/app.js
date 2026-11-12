@@ -13,8 +13,6 @@
     const NONCE_OFFSET = BLOB_SALT_OFFSET + 32;
     const HEADER_LENGTH = NONCE_OFFSET + 12;
     const TAG_LENGTH = 16;
-    // the highest minReaderVersion this page opens (DecryptedBlob.java)
-    const READER_VERSION = 1;
     // PKCS#8 encoding of an Ed25519 private key, followed by the 32-byte seed. WebCrypto can't import a raw seed.
     const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 
@@ -23,10 +21,14 @@
         passwords: {
             prefix: "", signedPath: "/db", passwordLabel: "Master password",
             empty: "The server has no password database yet",
+            // the highest minReaderVersion this page opens, the reader of PasswordBlob.VERSIONS
+            readerVersion: 0,
         },
         totp: {
             prefix: "totp/", signedPath: "/totp/db", passwordLabel: "Backup password (18-028)",
             empty: "The server has no 2FA codes yet",
+            // the reader of OtpBlob.VERSIONS
+            readerVersion: 0,
         },
     };
     // HMAC of a TOTP account (model/OtpAlgorithm.java)
@@ -167,7 +169,7 @@
     }
 
     // The blob format of SPEC.md, "Encrypted blob"
-    async function decrypt(keys, blob) {
+    async function decrypt(keys, blob, vault) {
         if (blob.length < HEADER_LENGTH + TAG_LENGTH || !equal(blob.subarray(0, 4), MAGIC)) {
             throw new Error("Invalid database: bad header");
         }
@@ -205,9 +207,9 @@
                 throw new Error("Invalid database: bad length");
             }
             const decrypted = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length)));
-            // like the apps (DecryptedBlob.READER_VERSION): a newer version marks changes that must not be ignored.
-            // Other unknown fields are ignored, this page only reads.
-            if ((decrypted.minReaderVersion ?? 0) > READER_VERSION) {
+            // like the apps (SchemaVersions.java): a newer reader version marks changes that must not be ignored.
+            // Newer writer versions are fine, this page only reads and ignores what it doesn't know.
+            if ((decrypted.minReaderVersion ?? 0) > vault.readerVersion) {
                 throw new Error("The database was saved by a newer version of the app, which this page can't read");
             }
             return decrypted.data;
@@ -319,7 +321,7 @@
             onProgress("Fetching database…");
             const {blob, clockOffset} = await fetchDatabase(keys, vault);
             onProgress("Decrypting…");
-            const data = await decrypt(keys, blob);
+            const data = await decrypt(keys, blob, vault);
             return {
                 loaded: vault === VAULTS.totp ? await otpAccounts(data) : passwordEntries(data),
                 clockOffset,

@@ -52,8 +52,9 @@ public abstract class VaultStore<T> {
     }
 
     /**
-     * @return Whether the data has fields that this version of the app doesn't know: it can be shown, but every
-     * modification fails with {@link ReadOnlyDatabaseException}, since saving would drop those fields.
+     * @return Whether a client of a newer writer version saved the data: it can be shown, but every
+     * modification fails with {@link ReadOnlyDatabaseException}, since saving would drop what this client
+     * skipped.
      */
     public boolean isReadOnly() {
         return readOnly;

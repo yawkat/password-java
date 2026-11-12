@@ -14,6 +14,11 @@ import org.jetbrains.annotations.Nullable;
  */
 @Data
 public class OtpBlob {
+    /**
+     * Writer 1: {@link OtpAccount#isFavorite()}.
+     */
+    public static final SchemaVersions VERSIONS = new SchemaVersions(0, 1);
+
     private List<OtpAccount> accounts = new ArrayList<>();
 
     /**

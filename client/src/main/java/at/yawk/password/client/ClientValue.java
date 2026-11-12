@@ -17,8 +17,8 @@ public class ClientValue<T> {
      */
     @Nullable private final LocalReason localReason;
     /**
-     * Whether the database has fields that this version of the app doesn't know: it can be shown, but saving it would
-     * drop them, so {@link VaultClient#save} refuses.
+     * Whether a client of a newer writer version saved the database: it can be shown, but saving it would
+     * drop what this client skipped, so {@link VaultClient#save} refuses.
      */
     private final boolean readOnly;
 

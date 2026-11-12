@@ -30,7 +30,7 @@ sealed interface UiState {
      * @property status Transient status bar message.
      * @property error Error to show in a dialog until [PasswordViewModel.dismissError].
      * @property passkeys Passkeys in database order, compared by identity like [entries].
-     * @property readOnly The database has fields that this version doesn't know, so it can't be saved (see
+     * @property readOnly A newer version saved the database, so it can't be saved (see
      * `VaultStore.isReadOnly`).
      */
     data class Unlocked(

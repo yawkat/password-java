@@ -3,12 +3,12 @@ package at.yawk.password.client;
 import at.yawk.password.AuthProtocol;
 import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
+import at.yawk.password.model.SchemaVersions;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
+import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -78,8 +78,13 @@ class BlobCodec {
                                   AuthProtocol.BLOB_INSTALL_SALT_OFFSET + AuthProtocol.SALT_LENGTH);
     }
 
-    static <T> DecryptedBlob<T> decrypt(ObjectMapper objectMapper, KeyMaterial keys, byte[] blob, Class<T> dataClass)
-            throws Exception {
+    /**
+     * @param known The schema versions of the vault that this client knows: data of a newer reader version is refused,
+     * data of a newer writer version is read leniently, skipping what this client doesn't know
+     * @throws UnreadableDatabaseException if the data is of a newer reader version, or doesn't match the schema
+     */
+    static <T> DecryptedBlob<T> decrypt(ObjectMapper objectMapper, KeyMaterial keys, byte[] blob, Class<T> dataClass,
+                                        SchemaVersions known) throws Exception {
         byte[] installSalt = installSalt(blob);
         if (installSalt == null || blob.length < AuthProtocol.BLOB_HEADER_LENGTH + TAG_BITS / 8) {
             throw new Exception("Invalid database: bad header");
@@ -114,20 +119,22 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
-            UnknownFields unknownFields = new UnknownFields();
             DecryptedBlob<T> decrypted;
             try {
-                decrypted = objectMapper.readerFor(decryptedType(objectMapper, dataClass))
-                        .withHandler(unknownFields)
-                        .readValue(plaintext, 4, length);
+                // the versions first, to know how to read the rest
+                Versions versions = objectMapper.readerFor(Versions.class).readValue(plaintext, 4, length);
+                if (versions.minReaderVersion > known.getReader()) {
+                    throw new UnreadableDatabaseException("reader version " + versions.minReaderVersion);
+                }
+                ObjectReader reader = objectMapper.readerFor(decryptedType(objectMapper, dataClass));
+                if (versions.minWriterVersion > known.getWriter()) {
+                    // read-only (see VaultClient): show what this client knows
+                    reader = reader.without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                            .with(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL);
+                }
+                decrypted = reader.readValue(plaintext, 4, length);
             } catch (IOException e) {
                 throw new UnreadableDatabaseException(e);
-            }
-            if (decrypted.getMinReaderVersion() > DecryptedBlob.READER_VERSION) {
-                throw new UnreadableDatabaseException("reader version " + decrypted.getMinReaderVersion());
-            }
-            if (unknownFields.found) {
-                decrypted.markReadOnly();
             }
             return decrypted;
         } finally {
@@ -139,20 +146,12 @@ class BlobCodec {
     }
 
     /**
-     * Skips fields that this client doesn't know, and notes that there were some: a newer version of the app wrote
-     * them, so the database can be shown, but not saved without dropping them.
+     * The versions of a {@link DecryptedBlob}, read before the rest.
      */
-    private static final class UnknownFields extends DeserializationProblemHandler {
-        boolean found;
-
-        @Override
-        public boolean handleUnknownProperty(DeserializationContext ctxt, JsonParser p,
-                                             JsonDeserializer<?> deserializer, Object beanOrClass,
-                                             String propertyName) throws IOException {
-            found = true;
-            p.skipChildren();
-            return true;
-        }
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static final class Versions {
+        public int minReaderVersion;
+        public int minWriterVersion;
     }
 
     static JavaType decryptedType(ObjectMapper objectMapper, Class<?> dataClass) {

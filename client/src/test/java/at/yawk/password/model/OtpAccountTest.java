@@ -35,7 +35,7 @@ public class OtpAccountTest {
         Assert.assertEquals(json, "{\"accounts\":[{\"id\":\"6f1c0a52-8d0e-4c1e-9f3b-2a8f4d6e7b90\",\"type\":\"totp\"," +
                                   "\"issuer\":\"GitHub\",\"label\":\"yawkat\",\"secret\":\"JBSWY3DPEHPK3PXP\"," +
                                   "\"algorithm\":\"SHA1\",\"digits\":6,\"period\":30," +
-                                  "\"backupCodes\":\"abcd-1234\\nefgh-5678\"}]}");
+                                  "\"backupCodes\":\"abcd-1234\\nefgh-5678\",\"favorite\":false}]}");
         Assert.assertEquals(mapper.readValue(json, OtpBlob.class), blob());
 
         OtpBlob favorite = blob();

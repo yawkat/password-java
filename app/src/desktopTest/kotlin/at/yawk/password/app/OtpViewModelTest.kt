@@ -10,6 +10,8 @@ import at.yawk.password.client.ClientValue
 import at.yawk.password.client.VaultClient
 import at.yawk.password.client.VaultKey
 import at.yawk.password.model.OtpAccount
+import at.yawk.password.model.OtpBlob
+import at.yawk.password.model.SchemaVersions
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -182,9 +184,10 @@ class OtpViewModelTest {
         assertTrue(runBlocking { vm.save(account("A")).await() })
         assertFalse(vm.awaitIdle().readOnly)
 
-        // a newer app saves a field that this one doesn't know
+        // a newer app saves a field that this one doesn't know, with a newer writer version
         val newer = VaultClient(server.url, AuthProtocol.TOTP_VAULT_PREFIX, MemoryStorageProvider(),
-                                VaultKey.ofPassword("backup".toByteArray()), Map::class.java)
+                                VaultKey.ofPassword("backup".toByteArray()), Map::class.java,
+                                SchemaVersions(OtpBlob.VERSIONS.reader, OtpBlob.VERSIONS.writer + 1))
         newer.load()
         newer.save(mapOf("accounts" to listOf(mapOf("issuer" to "B", "secret" to "JBSWY3DPEHPK3PXP", "future" to 1))))
         val saved = server.totpDb.get()

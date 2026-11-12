@@ -722,7 +722,7 @@ internal fun CompactBar(
 }
 
 /**
- * Shown while the vault has fields that this version doesn't know: it can be read, but not saved.
+ * Shown while the vault was saved by a newer version (see `VaultStore.isReadOnly`): it can be read, but not saved.
  */
 @Composable
 internal fun ReadOnlyBanner() = WarningBanner(READ_ONLY_TEXT)

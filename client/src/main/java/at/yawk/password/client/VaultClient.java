@@ -4,6 +4,7 @@ import at.yawk.password.AuthProtocol;
 import at.yawk.password.LocalStorageProvider;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.OtpBlob;
+import at.yawk.password.model.SchemaVersions;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -33,6 +34,7 @@ public class VaultClient<T> {
      */
     private final VaultKey key;
     private final Class<T> dataClass;
+    private final SchemaVersions versions;
 
     private static final String RESET_MESSAGE =
             "The vault was reset on the server. Unlock it with its password to create it again.";
@@ -57,7 +59,7 @@ public class VaultClient<T> {
      */
     private boolean loaded;
     /**
-     * Whether the last {@link #load} found fields that this client doesn't know, see {@link ClientValue#isReadOnly()}.
+     * Whether the last {@link #load} found data of a newer writer version, see {@link ClientValue#isReadOnly()}.
      */
     private boolean readOnly;
     /**
@@ -79,20 +81,23 @@ public class VaultClient<T> {
     /**
      * @param pathPrefix The vault's path prefix on the server: {@code ""} for the password vault, or
      * {@link AuthProtocol#TOTP_VAULT_PREFIX}
+     * @param versions The schema versions of the vault's data that this client knows, e.g. {@link OtpBlob#VERSIONS}
      */
     public VaultClient(String url, String pathPrefix, LocalStorageProvider localStorage, VaultKey key,
-                       Class<T> dataClass) {
+                       Class<T> dataClass, SchemaVersions versions) {
         this.databaseClient = new DatabaseClient(url, pathPrefix);
         this.localStorage = localStorage;
         this.key = key;
         this.dataClass = dataClass;
+        this.versions = versions;
     }
 
     /**
      * A client of the 2FA vault.
      */
     public static VaultClient<OtpBlob> otp(String url, LocalStorageProvider localStorage, VaultKey key) {
-        return new VaultClient<>(url, AuthProtocol.TOTP_VAULT_PREFIX, localStorage, key, OtpBlob.class);
+        return new VaultClient<>(url, AuthProtocol.TOTP_VAULT_PREFIX, localStorage, key, OtpBlob.class,
+                                 OtpBlob.VERSIONS);
     }
 
     public ClientValue<T> load() throws Exception {
@@ -168,7 +173,7 @@ public class VaultClient<T> {
 
         DecryptedBlob<T> remoteBlob;
         try {
-            remoteBlob = BlobCodec.decrypt(objectMapper, keys, remote, dataClass);
+            remoteBlob = BlobCodec.decrypt(objectMapper, keys, remote, dataClass, versions);
         } catch (UnreadableDatabaseException e) {
             // authentic, just newer than we can read: the local copy is older still
             throw e;
@@ -190,18 +195,15 @@ public class VaultClient<T> {
         if (local != null && keys.hasInstallSalt(BlobCodec.installSalt(local))) {
             DecryptedBlob<T> localBlob = null;
             try {
-                localBlob = BlobCodec.decrypt(objectMapper, keys, local, dataClass);
+                localBlob = BlobCodec.decrypt(objectMapper, keys, local, dataClass, versions);
             } catch (Exception e) {
                 log.warn("Could not decrypt the local copy, replacing it with the server copy", e);
             }
             if (localBlob != null && localBlob.getRevision() > remoteBlob.getRevision()) {
                 log.warn("Server copy (revision {}) is older than the local copy (revision {})",
                          remoteBlob.getRevision(), localBlob.getRevision());
-                if (remoteBlob.readOnly()) {
-                    // saving the local copy would replace fields on the server that this client doesn't know
-                    localBlob.markReadOnly();
-                }
-                return loaded(localBlob, ClientValue.LocalReason.SERVER_COPY_OLDER);
+                // saving the local copy would replace data on the server that this client doesn't know
+                return loaded(localBlob, ClientValue.LocalReason.SERVER_COPY_OLDER, isNewer(remoteBlob));
             }
         }
 
@@ -214,16 +216,30 @@ public class VaultClient<T> {
     }
 
     private ClientValue<T> loaded(DecryptedBlob<T> blob, @Nullable ClientValue.LocalReason reason) {
+        return loaded(blob, reason, false);
+    }
+
+    /**
+     * @param readOnly Read-only even if {@code blob} is not of a newer writer version
+     */
+    private ClientValue<T> loaded(DecryptedBlob<T> blob, @Nullable ClientValue.LocalReason reason, boolean readOnly) {
         loaded = true;
-        readOnly = blob.readOnly();
+        this.readOnly = readOnly || isNewer(blob);
         revision = blob.getRevision();
-        return new ClientValue<>(blob.getData(), reason, readOnly);
+        return new ClientValue<>(blob.getData(), reason, this.readOnly);
+    }
+
+    /**
+     * Whether a newer client saved {@code blob}: this one can only show it, saving would drop what it doesn't know.
+     */
+    private boolean isNewer(DecryptedBlob<T> blob) {
+        return blob.getMinWriterVersion() > versions.getWriter();
     }
 
     private DecryptedBlob<T> decryptLocal(byte[] local) throws Exception {
         byte[] localSalt = BlobCodec.installSalt(local);
         if (localSalt != null) {
-            return BlobCodec.decrypt(objectMapper, keysFor(localSalt), local, dataClass);
+            return BlobCodec.decrypt(objectMapper, keysFor(localSalt), local, dataClass, versions);
         }
         DecryptedBlob<T> legacy = decryptLegacy(local);
         if (legacy == null) {
@@ -251,7 +267,7 @@ public class VaultClient<T> {
      * registration.
      *
      * @throws IllegalStateException if nothing was loaded yet, or the last load failed
-     * @throws ReadOnlyDatabaseException if the last load found fields that this client doesn't know
+     * @throws ReadOnlyDatabaseException if the last load found data of a newer writer version
      * @throws WrongPasswordException if the vault was reset on the server and this client has an exported key, which
      * can't register it again (see {@link ClientValue.LocalReason#VAULT_RESET}). The local copy is saved anyway.
      */
@@ -270,6 +286,8 @@ public class VaultClient<T> {
         DecryptedBlob<T> decrypted = new DecryptedBlob<>();
         decrypted.setData(blob);
         decrypted.setRevision(revision + 1);
+        decrypted.setMinReaderVersion(versions.getReader());
+        decrypted.setMinWriterVersion(versions.getWriter());
         byte[] encrypted = BlobCodec.encrypt(objectMapper, keys, decrypted);
         localStorage.save(encrypted);
         revision = decrypted.getRevision();

@@ -1,7 +1,6 @@
 package at.yawk.password.model;
 
 import at.yawk.password.Base32;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -61,10 +60,8 @@ public class OtpAccount {
     @ToString.Exclude
     private String backupCodes = "";
     /**
-     * Shown at the top of the list. Left out of the JSON while {@code false}: clients that predate it reject unknown
-     * fields, so they keep opening a vault without favorites.
+     * Shown at the top of the list. Since {@linkplain OtpBlob#VERSIONS writer version} 1.
      */
-    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     @With
     private boolean favorite;
 
