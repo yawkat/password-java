@@ -217,6 +217,9 @@ Open the vault with *2FA codes* on the unlock screen. The first time, the app of
   by the issuer. The logos are part of the app, nothing is downloaded, so no one learns which accounts you have. Add
   more in `SiteIcons.kt`.
 - Each account has a free text field for its backup codes. Keep them here rather than in the password database.
+- The star (☆) on an account's page makes it a favorite: favorites are at the top of the list, marked ★, also when
+  searching, so Enter in the search field copies the code of the first matching favorite. The web page ignores
+  favorites.
 - The vault locks after five minutes without activity, and on Android as soon as the app goes to the background (after
   a minute if an account is being edited, e.g. while you copy its secret from the browser).
 

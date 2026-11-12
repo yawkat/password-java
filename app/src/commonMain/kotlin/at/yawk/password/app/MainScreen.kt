@@ -151,13 +151,19 @@ fun MainScreen(
         searchFocus.requestFocus()
     }
 
+    // the store refuses to save anyway; this says why before anything is typed
+    fun refuseReadOnly(): Boolean {
+        if (latest.readOnly) viewModel.showStatus(READ_ONLY_TEXT)
+        return latest.readOnly
+    }
+
     fun newEntry() {
-        if (!idleNow()) return
+        if (!idleNow() || refuseReadOnly()) return
         ui.startEditing(null)
     }
 
     fun editEntry() {
-        if (!idleNow()) return
+        if (!idleNow() || refuseReadOnly()) return
         ui.startEditing(currentNow() ?: return)
     }
 
@@ -206,7 +212,7 @@ fun MainScreen(
 
     fun deleteEntry() {
         val entry = currentNow() ?: return
-        if (!idleNow()) return
+        if (!idleNow() || refuseReadOnly()) return
         ui.dialog = MainDialog.ConfirmDelete(entry)
     }
 
@@ -368,6 +374,9 @@ fun MainScreen(
                     if (state.fromLocalStorage) {
                         OfflineBanner()
                     }
+                    if (state.readOnly) {
+                        ReadOnlyBanner()
+                    }
                     SearchField(
                         value = ui.query,
                         onValueChange = { ui.query = it },
@@ -413,6 +422,9 @@ fun MainScreen(
             HorizontalDivider()
             if (state.fromLocalStorage) {
                 OfflineBanner()
+            }
+            if (state.readOnly) {
+                ReadOnlyBanner()
             }
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.weight(1f).fillMaxHeight().padding(8.dp)) {
@@ -534,7 +546,7 @@ fun MainScreen(
         MainDialog.Passkeys -> PasskeysDialog(
             passkeys = state.passkeys,
             idle = idle,
-            onDelete = { ui.dialog = MainDialog.ConfirmDeletePasskey(it) },
+            onDelete = { if (!refuseReadOnly()) ui.dialog = MainDialog.ConfirmDeletePasskey(it) },
             onDismiss = { ui.dialog = null },
         )
         is MainDialog.ConfirmDeletePasskey -> ConfirmDialog(
@@ -709,10 +721,22 @@ internal fun CompactBar(
     }
 }
 
+/**
+ * Shown while the vault has fields that this version doesn't know: it can be read, but not saved.
+ */
 @Composable
-internal fun OfflineBanner() {
+internal fun ReadOnlyBanner() = WarningBanner(READ_ONLY_TEXT)
+
+internal const val READ_ONLY_TEXT = "Saved by a newer version of the app: read-only. Update the app to edit."
+
+@Composable
+internal fun OfflineBanner() =
+    WarningBanner("Showing the local copy, not the server copy. Saving will overwrite the server copy.")
+
+@Composable
+private fun WarningBanner(text: String) {
     Text(
-        "Showing the local copy, not the server copy. Saving will overwrite the server copy.",
+        text,
         color = Color.Black,
         modifier = Modifier.fillMaxWidth().background(OfflineBannerColor).padding(8.dp),
     )

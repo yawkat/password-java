@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import at.yawk.password.AuthProtocol
 import at.yawk.password.MemoryStorageProvider
 import at.yawk.password.client.ClientValue
 import at.yawk.password.client.VaultClient
@@ -13,6 +14,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -154,6 +156,49 @@ class OtpViewModelTest {
         other.close()
         assertEquals(OtpState.Closed, other.state.value)
         assertWipedSoon(passwords.last(), "password wiped on close")
+    }
+
+    @Test
+    fun favorite() {
+        val vm = newViewModel()
+        vm.create("backup")
+        assertTrue(runBlocking { vm.import(listOf(account("A"), account("B"))).await() })
+        val b = vm.awaitIdle().accounts.first { it.issuer == "B" }
+        assertTrue(runBlocking { vm.setFavorite(b, true).await() })
+        val favorited = vm.awaitIdle()
+        assertEquals("Added “B” to favorites", favorited.status?.text)
+        // the vault order is kept, the list sorts
+        assertEquals(listOf(false, true), favorited.accounts.map { it.isFavorite })
+        assertEquals(listOf("B", "A"), filterAccounts(favorited.accounts, "").map { it.issuer })
+        assertEquals("code-B", favorited.accounts[1].backupCodes)
+        assertTrue(runBlocking { vm.setFavorite(favorited.accounts[1], false).await() })
+        assertEquals(listOf(false, false), vm.awaitIdle().accounts.map { it.isFavorite })
+    }
+
+    @Test
+    fun newerVaultIsReadOnly() {
+        val vm = newViewModel()
+        vm.create("backup")
+        assertTrue(runBlocking { vm.save(account("A")).await() })
+        assertFalse(vm.awaitIdle().readOnly)
+
+        // a newer app saves a field that this one doesn't know
+        val newer = VaultClient(server.url, AuthProtocol.TOTP_VAULT_PREFIX, MemoryStorageProvider(),
+                                VaultKey.ofPassword("backup".toByteArray()), Map::class.java)
+        newer.load()
+        newer.save(mapOf("accounts" to listOf(mapOf("issuer" to "B", "secret" to "JBSWY3DPEHPK3PXP", "future" to 1))))
+        val saved = server.totpDb.get()
+
+        assertTrue(runBlocking { vm.reload().await() })
+        val reloaded = vm.awaitIdle()
+        assertTrue(reloaded.readOnly)
+        assertEquals(listOf("B"), reloaded.accounts.map { it.issuer })
+        assertFalse(runBlocking { vm.save(account("C")).await() })
+        val refused = vm.awaitIdle()
+        assertEquals("Save failed", refused.error?.title)
+        assertTrue(refused.readOnly)
+        assertEquals(listOf("B"), refused.accounts.map { it.issuer })
+        assertTrue(saved.contentEquals(server.totpDb.get()), "the newer vault is untouched")
     }
 
     @Test

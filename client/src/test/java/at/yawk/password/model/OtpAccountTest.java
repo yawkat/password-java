@@ -37,6 +37,12 @@ public class OtpAccountTest {
                                   "\"algorithm\":\"SHA1\",\"digits\":6,\"period\":30," +
                                   "\"backupCodes\":\"abcd-1234\\nefgh-5678\"}]}");
         Assert.assertEquals(mapper.readValue(json, OtpBlob.class), blob());
+
+        OtpBlob favorite = blob();
+        favorite.getAccounts().get(0).setFavorite(true);
+        json = mapper.writeValueAsString(favorite);
+        Assert.assertTrue(json.contains("\"favorite\":true"), json);
+        Assert.assertEquals(mapper.readValue(json, OtpBlob.class), favorite);
     }
 
     @Test

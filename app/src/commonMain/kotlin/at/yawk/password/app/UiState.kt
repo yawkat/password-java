@@ -30,6 +30,8 @@ sealed interface UiState {
      * @property status Transient status bar message.
      * @property error Error to show in a dialog until [PasswordViewModel.dismissError].
      * @property passkeys Passkeys in database order, compared by identity like [entries].
+     * @property readOnly The database has fields that this version doesn't know, so it can't be saved (see
+     * `VaultStore.isReadOnly`).
      */
     data class Unlocked(
         val entries: List<PasswordEntry>,
@@ -39,6 +41,7 @@ sealed interface UiState {
         val status: StatusMessage? = null,
         val error: ErrorMessage? = null,
         val passkeys: List<Passkey> = emptyList(),
+        val readOnly: Boolean = false,
     ) : UiState {
         // The entry list is compared by identity: an equal list of other entry objects (e.g. after a reload) is a
         // different state, because the store only accepts its own objects. StateFlow would otherwise drop the update.
@@ -46,6 +49,7 @@ sealed interface UiState {
             entries === other.entries &&
             passkeys === other.passkeys &&
             fromLocalStorage == other.fromLocalStorage &&
+            readOnly == other.readOnly &&
             busy == other.busy &&
             offlineSaveConfirmed == other.offlineSaveConfirmed &&
             status == other.status &&

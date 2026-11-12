@@ -13,6 +13,8 @@
     const NONCE_OFFSET = BLOB_SALT_OFFSET + 32;
     const HEADER_LENGTH = NONCE_OFFSET + 12;
     const TAG_LENGTH = 16;
+    // the highest minReaderVersion this page opens (DecryptedBlob.java)
+    const READER_VERSION = 1;
     // PKCS#8 encoding of an Ed25519 private key, followed by the 32-byte seed. WebCrypto can't import a raw seed.
     const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 
@@ -202,7 +204,13 @@
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Error("Invalid database: bad length");
             }
-            return JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length))).data;
+            const decrypted = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length)));
+            // like the apps (DecryptedBlob.READER_VERSION): a newer version marks changes that must not be ignored.
+            // Other unknown fields are ignored, this page only reads.
+            if ((decrypted.minReaderVersion ?? 0) > READER_VERSION) {
+                throw new Error("The database was saved by a newer version of the app, which this page can't read");
+            }
+            return decrypted.data;
         } finally {
             plaintext.fill(0);
         }

@@ -228,6 +228,7 @@ N = 2^16, r = 8, p = 1, 32-byte key and salt).
 | `data.passwords[].value` | string          | Free text. By convention, the first line (up to `\n` or `\r`) is the password; the rest holds username, notes and so on. |
 | `data.passkeys`          | array           | Passkeys (below), in the order they were added. Left out while empty. |
 | `revision`               | integer         | Incremented by every save (0 in legacy blobs)                        |
+| `minReaderVersion`       | integer         | Clients that read a lower version refuse to open the database. Left out while 0. |
 
 A passkey (WebAuthn credential) in `data.passkeys`. Binary values are base64url without padding, as in WebAuthn's JSON:
 
@@ -294,9 +295,25 @@ The 2FA vault has the same `revision`, and `data` holds its accounts:
 | `data.accounts[].digits`         | integer | Code length, 6 to 10                                                 |
 | `data.accounts[].period`         | integer | Seconds per code, e.g. 30, or 10 for Authy's own tokens              |
 | `data.accounts[].backupCodes`    | string  | Free text: the account's backup codes and anything kept with them    |
+| `data.accounts[].favorite`       | boolean | Shown at the top of the list. Optional, left out while `false`       |
 
 The code at unix time `t` is the HOTP (RFC 4226) of the counter `floor(t / period)`, truncated to `digits` digits
-(RFC 6238). Clients reject a vault with unknown fields rather than drop them on the next save.
+(RFC 6238). `favorite` is left out while `false`, so that clients that predate it (which reject unknown fields) keep
+opening a vault without favorites.
+
+### New fields
+
+A client opens a database with fields it doesn't know (at any level) read-only: it shows the data, but refuses every
+save, since a save would drop those fields. This holds for every copy it might save over: if it picks the local copy
+over a server copy with unknown fields (`SERVER_COPY_OLDER`), that is read-only too. The data is authenticated with the
+vault's key, so unknown fields come from another client of the same user, not from the server.
+
+Some changes must not be ignored even by a client that only reads, e.g. anything that changes how a code is computed,
+what a secret means, or which relying party a passkey may be used for: a client that ignored such a field would act
+wrongly rather than just show less. Such a change raises the top-level `minReaderVersion`, and a client whose reader
+version (`DecryptedBlob.READER_VERSION`, currently 1) is lower refuses to open the database, as for an unknown protocol
+version. Other new fields, e.g. `favorite`, leave it alone. Clients older than reader version 1 reject any unknown
+field, including `minReaderVersion` itself.
 
 ## Client behaviour
 

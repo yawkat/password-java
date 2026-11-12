@@ -10,4 +10,8 @@ public class UnreadableDatabaseException extends Exception {
         super("The database was saved by a newer version of the app, update this one to open it (" +
               cause.getMessage() + ")", cause);
     }
+
+    UnreadableDatabaseException(String reason) {
+        super("The database was saved by a newer version of the app, update this one to open it (" + reason + ")");
+    }
 }

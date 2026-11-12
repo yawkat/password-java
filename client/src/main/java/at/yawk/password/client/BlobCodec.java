@@ -3,8 +3,12 @@ package at.yawk.password.client;
 import at.yawk.password.AuthProtocol;
 import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -110,16 +114,44 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
+            UnknownFields unknownFields = new UnknownFields();
+            DecryptedBlob<T> decrypted;
             try {
-                return objectMapper.readerFor(decryptedType(objectMapper, dataClass)).readValue(plaintext, 4, length);
+                decrypted = objectMapper.readerFor(decryptedType(objectMapper, dataClass))
+                        .withHandler(unknownFields)
+                        .readValue(plaintext, 4, length);
             } catch (IOException e) {
                 throw new UnreadableDatabaseException(e);
             }
+            if (decrypted.getMinReaderVersion() > DecryptedBlob.READER_VERSION) {
+                throw new UnreadableDatabaseException("reader version " + decrypted.getMinReaderVersion());
+            }
+            if (unknownFields.found) {
+                decrypted.markReadOnly();
+            }
+            return decrypted;
         } finally {
             Arrays.fill(key, (byte) 0);
             if (plaintext != null) {
                 Arrays.fill(plaintext, (byte) 0);
             }
+        }
+    }
+
+    /**
+     * Skips fields that this client doesn't know, and notes that there were some: a newer version of the app wrote
+     * them, so the database can be shown, but not saved without dropping them.
+     */
+    private static final class UnknownFields extends DeserializationProblemHandler {
+        boolean found;
+
+        @Override
+        public boolean handleUnknownProperty(DeserializationContext ctxt, JsonParser p,
+                                             JsonDeserializer<?> deserializer, Object beanOrClass,
+                                             String propertyName) throws IOException {
+            found = true;
+            p.skipChildren();
+            return true;
         }
     }
 

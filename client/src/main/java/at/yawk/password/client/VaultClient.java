@@ -57,6 +57,10 @@ public class VaultClient<T> {
      */
     private boolean loaded;
     /**
+     * Whether the last {@link #load} found fields that this client doesn't know, see {@link ClientValue#isReadOnly()}.
+     */
+    private boolean readOnly;
+    /**
      * {@code false} if the last {@link #load} found the server without registration, so that {@link #save} registers
      * {@link #keys} first. It is only registered on save, never on load: that would claim a server just because its
      * URL was entered.
@@ -93,6 +97,7 @@ public class VaultClient<T> {
 
     public ClientValue<T> load() throws Exception {
         loaded = false;
+        readOnly = false;
         keysAccepted = false;
         byte[] local = localStorage.load();
 
@@ -156,7 +161,7 @@ public class VaultClient<T> {
             if (local == null) {
                 loaded = true;
                 revision = 0;
-                return new ClientValue<>(null, reasonWithoutRemote);
+                return new ClientValue<>(null, reasonWithoutRemote, false);
             }
             return loaded(decryptLocal(local), reasonWithoutRemote);
         }
@@ -192,6 +197,10 @@ public class VaultClient<T> {
             if (localBlob != null && localBlob.getRevision() > remoteBlob.getRevision()) {
                 log.warn("Server copy (revision {}) is older than the local copy (revision {})",
                          remoteBlob.getRevision(), localBlob.getRevision());
+                if (remoteBlob.readOnly()) {
+                    // saving the local copy would replace fields on the server that this client doesn't know
+                    localBlob.markReadOnly();
+                }
                 return loaded(localBlob, ClientValue.LocalReason.SERVER_COPY_OLDER);
             }
         }
@@ -206,8 +215,9 @@ public class VaultClient<T> {
 
     private ClientValue<T> loaded(DecryptedBlob<T> blob, @Nullable ClientValue.LocalReason reason) {
         loaded = true;
+        readOnly = blob.readOnly();
         revision = blob.getRevision();
-        return new ClientValue<>(blob.getData(), reason);
+        return new ClientValue<>(blob.getData(), reason, readOnly);
     }
 
     private DecryptedBlob<T> decryptLocal(byte[] local) throws Exception {
@@ -241,12 +251,16 @@ public class VaultClient<T> {
      * registration.
      *
      * @throws IllegalStateException if nothing was loaded yet, or the last load failed
+     * @throws ReadOnlyDatabaseException if the last load found fields that this client doesn't know
      * @throws WrongPasswordException if the vault was reset on the server and this client has an exported key, which
      * can't register it again (see {@link ClientValue.LocalReason#VAULT_RESET}). The local copy is saved anyway.
      */
     public void save(T blob) throws Exception {
         if (!loaded) {
             throw new IllegalStateException("Load the database before saving (the last load failed)");
+        }
+        if (readOnly) {
+            throw new ReadOnlyDatabaseException();
         }
         KeyMaterial keys = this.keys;
         if (keys == null) {

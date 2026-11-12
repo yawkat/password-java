@@ -5,8 +5,10 @@ import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -41,6 +43,54 @@ public class BlobCodecTest {
         Assert.assertEquals(BlobCodec.decrypt(OM, KEYS, encrypted, PasswordBlob.class), blob);
         // fresh blob salt and nonce every time
         Assert.assertNotEquals(BlobCodec.encrypt(OM, KEYS, blob), encrypted);
+        Assert.assertFalse(BlobCodec.decrypt(OM, KEYS, encrypted, PasswordBlob.class).readOnly());
+        Assert.assertFalse(new String(OM.writeValueAsBytes(blob), StandardCharsets.UTF_8).contains("minReaderVersion"));
+    }
+
+    @DataProvider
+    public Object[][] unknownFields() {
+        return new Object[][]{
+                {"{\"data\":{\"passwords\":[]},\"revision\":1,\"future\":{\"x\":[1,2]}}"},
+                {"{\"data\":{\"passwords\":[],\"future\":true},\"revision\":1}"},
+                {"{\"data\":{\"passwords\":[{\"name\":\"a\",\"value\":\"b\",\"future\":1}]},\"revision\":1}"},
+                // the name of the flag itself is no known field
+                {"{\"data\":{\"passwords\":[]},\"revision\":1,\"readOnly\":false}"},
+        };
+    }
+
+    @Test(dataProvider = "unknownFields")
+    public void testUnknownFieldsAreReadOnly(String json) throws Exception {
+        byte[] encrypted = BlobCodec.encrypt(OM, KEYS, rawBlob(json));
+        DecryptedBlob<PasswordBlob> decrypted = BlobCodec.decrypt(OM, KEYS, encrypted, PasswordBlob.class);
+        Assert.assertTrue(decrypted.readOnly());
+        Assert.assertEquals(decrypted.getRevision(), 1);
+    }
+
+    @Test
+    public void testMinReaderVersion() throws Exception {
+        String current = "{\"data\":{\"passwords\":[]},\"revision\":1,\"minReaderVersion\":" +
+                         DecryptedBlob.READER_VERSION + "}";
+        Assert.assertFalse(BlobCodec.decrypt(OM, KEYS, BlobCodec.encrypt(OM, KEYS, rawBlob(current)),
+                                             PasswordBlob.class).readOnly());
+        String newer = "{\"data\":{\"passwords\":[]},\"revision\":1,\"minReaderVersion\":" +
+                       (DecryptedBlob.READER_VERSION + 1) + "}";
+        byte[] encrypted = BlobCodec.encrypt(OM, KEYS, rawBlob(newer));
+        Assert.expectThrows(UnreadableDatabaseException.class,
+                            () -> BlobCodec.decrypt(OM, KEYS, encrypted, PasswordBlob.class));
+    }
+
+    /**
+     * A blob that {@link BlobCodec#encrypt} writes as exactly {@code json}.
+     */
+    @SuppressWarnings("unchecked")
+    private static DecryptedBlob<?> rawBlob(String json) throws Exception {
+        Map<String, Object> map = OM.readValue(json, Map.class);
+        return new DecryptedBlob<Object>() {
+            @JsonValue
+            Map<String, Object> json() {
+                return map;
+            }
+        };
     }
 
     @Test

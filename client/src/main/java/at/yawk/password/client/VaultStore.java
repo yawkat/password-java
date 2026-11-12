@@ -18,11 +18,13 @@ public abstract class VaultStore<T> {
     private final VaultClient<T> client;
     private volatile T data;
     @Nullable private volatile ClientValue.LocalReason localReason;
+    private volatile boolean readOnly;
 
-    VaultStore(VaultClient<T> client, T data, @Nullable ClientValue.LocalReason localReason) {
+    VaultStore(VaultClient<T> client, T data, @Nullable ClientValue.LocalReason localReason, boolean readOnly) {
         this.client = client;
         this.data = data;
         this.localReason = localReason;
+        this.readOnly = readOnly;
     }
 
     /**
@@ -49,10 +51,19 @@ public abstract class VaultStore<T> {
         return localReason;
     }
 
+    /**
+     * @return Whether the data has fields that this version of the app doesn't know: it can be shown, but every
+     * modification fails with {@link ReadOnlyDatabaseException}, since saving would drop those fields.
+     */
+    public boolean isReadOnly() {
+        return readOnly;
+    }
+
     public synchronized void reload() throws Exception {
         ClientValue<T> value = client.load();
         data = value.getValue() == null ? emptyData() : value.getValue();
         localReason = value.getLocalReason();
+        readOnly = value.isReadOnly();
     }
 
     /**
@@ -60,6 +71,9 @@ public abstract class VaultStore<T> {
      * only replaced once the save succeeded.
      */
     synchronized void modify(UnaryOperator<T> operation) throws Exception {
+        if (readOnly) {
+            throw new ReadOnlyDatabaseException();
+        }
         T modified = operation.apply(data);
         client.save(modified);
         data = modified;

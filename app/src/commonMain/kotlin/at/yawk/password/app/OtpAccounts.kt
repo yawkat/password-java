@@ -18,13 +18,18 @@ fun accountTitle(account: OtpAccount): String =
 fun accountSubtitle(account: OtpAccount): String = if (account.issuer.isEmpty()) "" else account.label
 
 /**
- * The accounts whose issuer or label contains [query] (case-insensitive), sorted by title and label.
+ * The accounts whose issuer or label contains [query] (case-insensitive), favorites first, then sorted by title and
+ * label.
  */
 fun filterAccounts(accounts: List<OtpAccount>, query: String): List<OtpAccount> {
     val collator = Collator.getInstance().apply { strength = Collator.SECONDARY }
     return accounts
         .filter { it.issuer.contains(query, ignoreCase = true) || it.label.contains(query, ignoreCase = true) }
-        .sortedWith(compareBy<OtpAccount, String>(collator) { accountTitle(it) }.thenBy(collator) { it.label })
+        .sortedWith(
+            compareByDescending<OtpAccount> { it.isFavorite }
+                .thenBy(collator) { accountTitle(it) }
+                .thenBy(collator) { it.label },
+        )
 }
 
 /**
@@ -89,6 +94,8 @@ data class OtpDraft(
     val digits: String = "6",
     val period: String = "30",
     val backupCodes: String = "",
+    /** Not a field of the editor: kept, so that editing an account keeps it a favorite */
+    val favorite: Boolean = false,
 ) {
     // without the secret and the backup codes, so they never end up in logs
     override fun toString() = "OtpDraft(issuer=$issuer, label=$label)"
@@ -107,6 +114,7 @@ data class OtpDraft(
         account.digits = digits.trim().toIntOrNull() ?: return Result.failure(IllegalArgumentException("Invalid number of digits"))
         account.period = period.trim().toIntOrNull() ?: return Result.failure(IllegalArgumentException("Invalid period"))
         account.backupCodes = backupCodes
+        account.isFavorite = favorite
         if (secret.isBlank()) return Result.failure(IllegalArgumentException("Missing secret"))
         return try {
             Totp.check(account)
@@ -125,6 +133,7 @@ data class OtpDraft(
             digits = account.digits.toString(),
             period = account.period.toString(),
             backupCodes = account.backupCodes,
+            favorite = account.isFavorite,
         )
 
         /**

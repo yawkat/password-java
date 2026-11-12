@@ -102,6 +102,16 @@ internal fun PasskeyRequestDialog(request: PasskeyRequest, state: UiState.Unlock
                         Button(onClick = dismiss, modifier = Modifier.focusRequester(cancelFocus)) { Text("OK") }
                     },
                 )
+            } else if (state.readOnly) {
+                // the save would be refused: say so before the user approves
+                AlertDialog(
+                    onDismissRequest = dismiss,
+                    title = { Text("Can't create passkey") },
+                    text = { Text("${request.rpId} asks to create a passkey. $READ_ONLY_TEXT") },
+                    confirmButton = {
+                        Button(onClick = dismiss, modifier = Modifier.focusRequester(cancelFocus)) { Text("OK") }
+                    },
+                )
             } else {
                 val passkey = request.passkey
                 val replaced = state.passkeys.firstOrNull {

@@ -112,8 +112,65 @@ public class ProtocolTest {
         newer.setRevision(5);
         new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
 
+        // shown read-only, rather than dropping the field on the next save
+        PasswordClient reader = client(storage, PASSWORD);
+        ClientValue<PasswordBlob> loaded = reader.load();
+        Assert.assertTrue(loaded.isReadOnly());
+        Assert.assertNull(loaded.getLocalReason());
+        Assert.assertEquals(loaded.getValue(), new PasswordBlob());
+        byte[] serverCopy = new DatabaseClient(server.getUrl()).getDatabase(keys);
+        Assert.expectThrows(ReadOnlyDatabaseException.class, () -> reader.save(data("mine")));
+        Assert.assertEquals(new DatabaseClient(server.getUrl()).getDatabase(keys), serverCopy);
+        Assert.assertEquals(storage.load(), serverCopy, "the local copy is the server copy, not ours");
+        // the store refuses before it gets to the client
+        PasswordStore store = PasswordStore.open(client(storage, PASSWORD));
+        Assert.assertTrue(store.isReadOnly());
+        Assert.expectThrows(ReadOnlyDatabaseException.class, () -> store.add("a", "b"));
+        Assert.assertEquals(store.getEntries().size(), 0);
+    }
+
+    @Test
+    public void testNewerServerCopyMustNotBeIgnored() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        PasswordClient client = client(storage, PASSWORD);
+        client.load();
+        client.save(data("old"));
+
+        byte[] local = storage.load();
+        KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(local));
+        DecryptedBlob<PasswordBlob> newer = new DecryptedBlob<>();
+        newer.setData(new PasswordBlob());
+        newer.setRevision(5);
+        newer.setMinReaderVersion(DecryptedBlob.READER_VERSION + 1);
+        new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
+
         // refused, rather than falling back to the local copy and replacing the newer data with it
         Assert.expectThrows(UnreadableDatabaseException.class, () -> client(storage, PASSWORD).load());
+    }
+
+    @Test
+    public void testNewerServerCopyOlderThanLocal() throws Exception {
+        MemoryStorageProvider storage = new MemoryStorageProvider();
+        PasswordClient client = client(storage, PASSWORD);
+        client.load();
+        for (int i = 0; i < 10; i++) {
+            client.save(data("local " + i));
+        }
+
+        // a newer app saved a field, with a lower revision than the local copy
+        KeyMaterial keys = KeyMaterial.derive(PASSWORD, BlobCodec.installSalt(storage.load()));
+        DecryptedBlob<Map<String, Object>> newer = new DecryptedBlob<>();
+        newer.setData(Map.of("passwords", List.of(), "future", 1));
+        newer.setRevision(5);
+        new DatabaseClient(server.getUrl()).putDatabase(keys, BlobCodec.encrypt(new ObjectMapper(), keys, newer));
+
+        // the local copy is shown, but saving it would replace the field on the server
+        PasswordClient reader = client(storage, PASSWORD);
+        ClientValue<PasswordBlob> loaded = reader.load();
+        Assert.assertEquals(loaded.getLocalReason(), ClientValue.LocalReason.SERVER_COPY_OLDER);
+        Assert.assertEquals(loaded.getValue(), data("local 9"));
+        Assert.assertTrue(loaded.isReadOnly());
+        Assert.expectThrows(ReadOnlyDatabaseException.class, () -> reader.save(data("mine")));
     }
 
     @Test

@@ -1,9 +1,14 @@
 package at.yawk.password.model;
 
 import at.yawk.password.Base32;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.ToString;
+import lombok.With;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -15,6 +20,9 @@ import org.jetbrains.annotations.Nullable;
  * @author yawkat
  */
 @Data
+@NoArgsConstructor
+// for @With, which copies every field: the values come from an account, so they went through the setters already
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class OtpAccount {
     public static final String TYPE_TOTP = "totp";
 
@@ -52,6 +60,13 @@ public class OtpAccount {
      */
     @ToString.Exclude
     private String backupCodes = "";
+    /**
+     * Shown at the top of the list. Left out of the JSON while {@code false}: clients that predate it reject unknown
+     * fields, so they keep opening a vault without favorites.
+     */
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    @With
+    private boolean favorite;
 
     public void setId(@Nullable String id) {
         this.id = id == null ? UUID.randomUUID().toString() : id;

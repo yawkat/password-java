@@ -488,6 +488,7 @@ class OtpViewModel(
             store.localReason,
             status = StatusMessage(status),
             offerFingerprint = shouldOfferFingerprint(),
+            readOnly = store.isReadOnly,
         )
         startIdleLock()
     }
@@ -513,6 +514,15 @@ class OtpViewModel(
             errorTitle = "Save failed",
         ) { store -> if (existing) store.update(account) else store.add(account) })
     }
+
+    fun setFavorite(account: OtpAccount, favorite: Boolean): Deferred<Boolean> = succeeded(modify(
+        success = {
+            if (favorite) "Added “${accountTitle(account)}” to favorites"
+            else "Removed “${accountTitle(account)}” from favorites"
+        },
+        busyText = "Saving…",
+        errorTitle = "Save failed",
+    ) { store -> store.update(account.withFavorite(favorite)) })
 
     fun delete(account: OtpAccount): Deferred<Boolean> = succeeded(modify(
         success = { "Deleted “${accountTitle(account)}”" },
@@ -581,6 +591,7 @@ class OtpViewModel(
                             busy = false,
                             status = StatusMessage(success(store)),
                             offerFingerprint = offerFingerprint,
+                            readOnly = store.isReadOnly,
                         )
                     }
                     Unit
