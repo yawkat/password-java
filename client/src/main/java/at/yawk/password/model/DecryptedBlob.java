@@ -1,6 +1,6 @@
 package at.yawk.password.model;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 /**
@@ -18,15 +18,14 @@ public class DecryptedBlob<T> {
      */
     private long revision;
     /**
-     * The {@link SchemaVersions#getReader()} of the client that saved it. Left out of the JSON while 0, so that clients
-     * that predate it keep opening the database.
+     * The {@link SchemaVersions#getReader()} of the client that saved it. Not part of the JSON: it is in a header
+     * before it (see SPEC.md, "Schema versions"), since it decides how to read the JSON.
      */
-    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    @JsonIgnore
     private int minReaderVersion;
     /**
-     * The {@link SchemaVersions#getWriter()} of the client that saved it. Left out of the JSON while 0, like
-     * {@link #minReaderVersion}.
+     * The {@link SchemaVersions#getWriter()} of the client that saved it, in the header like {@link #minReaderVersion}.
      */
-    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    @JsonIgnore
     private int minWriterVersion;
 }

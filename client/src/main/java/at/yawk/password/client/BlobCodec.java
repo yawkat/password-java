@@ -4,10 +4,8 @@ import at.yawk.password.AuthProtocol;
 import at.yawk.password.HashUtil;
 import at.yawk.password.model.DecryptedBlob;
 import at.yawk.password.model.SchemaVersions;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
@@ -22,7 +20,7 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * The encrypted database format, see SPEC.md:
- * {@code "PWDB" ‖ version ‖ install salt ‖ blob salt ‖ nonce ‖ AES-256-GCM(len ‖ json ‖ padding)}, with the header
+ * {@code "PWDB" ‖ version ‖ install salt ‖ blob salt ‖ nonce ‖ AES-256-GCM(len ‖ payload ‖ padding)}, with the header
  * as associated data. The key is derived from the {@link KeyMaterial} and the random blob salt, so every blob has its
  * own key.
  *
@@ -35,8 +33,37 @@ class BlobCodec {
      * The plaintext is padded to a multiple of this, so the blob size only roughly reveals the database size.
      */
     static final int PADDING = 4096;
+    /**
+     * First byte of a payload with the schema versions header. A payload without it, written before the header
+     * existed, is the JSON alone, which always starts with <code>{</code>.
+     */
+    static final byte VERSIONS_MARKER = 1;
+    private static final int VERSIONS_HEADER_LENGTH = 5;
 
     static byte[] encrypt(ObjectMapper objectMapper, KeyMaterial keys, DecryptedBlob<?> msg) throws Exception {
+        if (msg.getMinReaderVersion() < 0 || msg.getMinReaderVersion() > 0xffff ||
+            msg.getMinWriterVersion() < 0 || msg.getMinWriterVersion() > 0xffff) {
+            throw new IllegalArgumentException("Schema versions out of range");
+        }
+        byte[] json = objectMapper.writeValueAsBytes(msg);
+        byte[] payload = ByteBuffer.allocate(VERSIONS_HEADER_LENGTH + json.length)
+                .put(VERSIONS_MARKER)
+                .putShort((short) msg.getMinReaderVersion())
+                .putShort((short) msg.getMinWriterVersion())
+                .put(json)
+                .array();
+        try {
+            return encryptPayload(keys, payload);
+        } finally {
+            Arrays.fill(json, (byte) 0);
+            Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    /**
+     * Encrypt a payload as it is, e.g. one of another format, for tests.
+     */
+    static byte[] encryptPayload(KeyMaterial keys, byte[] payload) throws Exception {
         ByteBuffer header = ByteBuffer.allocate(AuthProtocol.BLOB_HEADER_LENGTH);
         header.put(AuthProtocol.BLOB_MAGIC);
         header.put((byte) AuthProtocol.VERSION);
@@ -46,9 +73,8 @@ class BlobCodec {
         byte[] nonce = HashUtil.generateRandomBytes(AuthProtocol.BLOB_NONCE_LENGTH);
         header.put(nonce);
 
-        byte[] json = objectMapper.writeValueAsBytes(msg);
-        int paddedLength = (4 + json.length + PADDING - 1) / PADDING * PADDING;
-        byte[] plaintext = ByteBuffer.allocate(paddedLength).putInt(json.length).put(json).array();
+        int paddedLength = (4 + payload.length + PADDING - 1) / PADDING * PADDING;
+        byte[] plaintext = ByteBuffer.allocate(paddedLength).putInt(payload.length).put(payload).array();
         byte[] key = keys.containerKey(blobSalt);
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -61,7 +87,6 @@ class BlobCodec {
                     .array();
         } finally {
             Arrays.fill(key, (byte) 0);
-            Arrays.fill(json, (byte) 0);
             Arrays.fill(plaintext, (byte) 0);
         }
     }
@@ -120,29 +145,38 @@ class BlobCodec {
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Exception("Invalid database: bad length");
             }
-            JsonNode tree;
-            Versions versions;
-            try {
-                tree = objectMapper.readTree(plaintext, 4, length);
-                // the versions first, to know how to read the rest
-                versions = objectMapper.readerFor(Versions.class).readValue(tree);
-            } catch (IOException e) {
-                throw new UnreadableDatabaseException(e, -1);
+            int minReaderVersion = 0;
+            int minWriterVersion = 0;
+            int jsonOffset = 4;
+            int jsonLength = length;
+            if (length >= VERSIONS_HEADER_LENGTH && plaintext[4] == VERSIONS_MARKER) {
+                ByteBuffer versions = ByteBuffer.wrap(plaintext, 5, 4);
+                minReaderVersion = Short.toUnsignedInt(versions.getShort());
+                minWriterVersion = Short.toUnsignedInt(versions.getShort());
+                jsonOffset += VERSIONS_HEADER_LENGTH;
+                jsonLength -= VERSIONS_HEADER_LENGTH;
+            } else if (length == 0 || plaintext[4] != '{') {
+                // a header of a later format
+                throw new UnreadableDatabaseException("unknown payload format");
             }
-            if (versions.minReaderVersion > known.getReader()) {
-                throw new UnreadableDatabaseException("reader version " + versions.minReaderVersion, versions.revision);
+            if (minReaderVersion > known.getReader()) {
+                throw new UnreadableDatabaseException("reader version " + minReaderVersion);
             }
             ObjectReader reader = objectMapper.readerFor(decryptedType(objectMapper, dataClass));
-            if (isNewerWriter(versions.minWriterVersion, known)) {
+            if (isNewerWriter(minWriterVersion, known)) {
                 // read-only (see VaultClient): show what this client knows
                 reader = reader.without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                         .with(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL);
             }
+            DecryptedBlob<T> decrypted;
             try {
-                return reader.readValue(tree);
+                decrypted = reader.readValue(plaintext, jsonOffset, jsonLength);
             } catch (IOException e) {
-                throw new UnreadableDatabaseException(e, versions.revision);
+                throw new UnreadableDatabaseException(e);
             }
+            decrypted.setMinReaderVersion(minReaderVersion);
+            decrypted.setMinWriterVersion(minWriterVersion);
+            return decrypted;
         } finally {
             Arrays.fill(key, (byte) 0);
             if (plaintext != null) {
@@ -157,16 +191,6 @@ class BlobCodec {
      */
     static boolean isNewerWriter(int minWriterVersion, SchemaVersions known) {
         return minWriterVersion > known.getWriter();
-    }
-
-    /**
-     * The versions and revision of a {@link DecryptedBlob}, read before the rest.
-     */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private static final class Versions {
-        public long revision;
-        public int minReaderVersion;
-        public int minWriterVersion;
     }
 
     static JavaType decryptedType(ObjectMapper objectMapper, Class<?> dataClass) {

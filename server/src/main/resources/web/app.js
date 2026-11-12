@@ -13,6 +13,8 @@
     const NONCE_OFFSET = BLOB_SALT_OFFSET + 32;
     const HEADER_LENGTH = NONCE_OFFSET + 12;
     const TAG_LENGTH = 16;
+    // first byte of a payload with the schema versions header (BlobCodec.VERSIONS_MARKER)
+    const VERSIONS_MARKER = 1;
     // PKCS#8 encoding of an Ed25519 private key, followed by the 32-byte seed. WebCrypto can't import a raw seed.
     const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 
@@ -206,13 +208,21 @@
             if (length < 0 || length > plaintext.length - 4) {
                 throw new Error("Invalid database: bad length");
             }
-            const decrypted = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(plaintext.subarray(4, 4 + length)));
-            // like the apps (SchemaVersions.java): a newer reader version marks changes that must not be ignored.
-            // Newer writer versions are fine, this page only reads and ignores what it doesn't know.
-            if ((decrypted.minReaderVersion ?? 0) > vault.readerVersion) {
+            // the schema versions header (BlobCodec.java), or the JSON alone in blobs written before it existed
+            let json = plaintext.subarray(4, 4 + length);
+            let minReaderVersion = 0;
+            if (json[0] === VERSIONS_MARKER && json.length >= 5) {
+                minReaderVersion = new DataView(json.buffer, json.byteOffset).getUint16(1);
+                json = json.subarray(5);
+            } else if (json[0] !== "{".charCodeAt(0)) {
                 throw new Error("The database was saved by a newer version of the app, which this page can't read");
             }
-            return decrypted.data;
+            // like the apps (SchemaVersions.java): a newer reader version marks changes that must not be ignored.
+            // Newer writer versions are fine, this page only reads and ignores what it doesn't know.
+            if (minReaderVersion > vault.readerVersion) {
+                throw new Error("The database was saved by a newer version of the app, which this page can't read");
+            }
+            return JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(json)).data;
         } finally {
             plaintext.fill(0);
         }

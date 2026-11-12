@@ -220,8 +220,9 @@ Open the vault with *2FA codes* on the unlock screen. The first time, the app of
 - The star (☆) on an account's page makes it a favorite: favorites are at the top of the list, marked ★, also when
   searching, so Enter in the search field copies the code of the first matching favorite. The web page ignores
   favorites.
-- Once a newer version of the app has saved the 2FA vault, older versions open it read-only (or not at all, if they
-  predate this), see [SPEC.md](SPEC.md#schema-versions). Update the app on all devices.
+- Once a newer version of the app has saved a vault, older versions open it read-only, or not at all if the change
+  must not be ignored, see [SPEC.md](SPEC.md#schema-versions). Versions from before schema versions can't open a vault
+  at all once this one has saved it. Update the app on all devices.
 - The vault locks after five minutes without activity, and on Android as soon as the app goes to the background (after
   a minute if an account is being edited, e.g. while you copy its secret from the browser).
 

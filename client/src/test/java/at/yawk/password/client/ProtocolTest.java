@@ -220,11 +220,11 @@ public class ProtocolTest {
 
     @DataProvider
     public Object[][] unreadableLocalRevisions() {
-        return new Object[][]{{5L, true}, {1L, false}};
+        return new Object[][]{{5L}, {1L}};
     }
 
     @Test(dataProvider = "unreadableLocalRevisions")
-    public void testUnreadableLocalCopy(long localRevision, boolean refused) throws Exception {
+    public void testUnreadableLocalCopy(long localRevision) throws Exception {
         MemoryStorageProvider storage = new MemoryStorageProvider();
         PasswordClient client = client(storage, PASSWORD);
         client.load();
@@ -240,15 +240,9 @@ public class ProtocolTest {
         byte[] local = BlobCodec.encrypt(new ObjectMapper(), keys, newer);
         storage.save(local);
 
-        if (refused) {
-            // replacing it with the server copy would lose what the server doesn't have
-            Assert.expectThrows(UnreadableDatabaseException.class, () -> client(storage, PASSWORD).load());
-            Assert.assertEquals(storage.load(), local);
-        } else {
-            // older than the server copy: nothing to lose
-            Assert.assertEquals(client(storage, PASSWORD).load().getValue(), data("b"));
-            Assert.assertNotEquals(storage.load(), local);
-        }
+        // whatever its revision: the server copy is no later version of it, so replacing it could lose data
+        Assert.expectThrows(UnreadableDatabaseException.class, () -> client(storage, PASSWORD).load());
+        Assert.assertEquals(storage.load(), local);
     }
 
     @Test

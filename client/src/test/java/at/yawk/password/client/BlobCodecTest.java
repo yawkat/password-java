@@ -7,10 +7,9 @@ import at.yawk.password.model.OtpBlob;
 import at.yawk.password.model.PasswordBlob;
 import at.yawk.password.model.PasswordEntry;
 import at.yawk.password.model.SchemaVersions;
-import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -45,76 +44,90 @@ public class BlobCodecTest {
         Assert.assertEquals(BlobCodec.decrypt(OM, KEYS, encrypted, PasswordBlob.class, PasswordBlob.VERSIONS), blob);
         // fresh blob salt and nonce every time
         Assert.assertNotEquals(BlobCodec.encrypt(OM, KEYS, blob), encrypted);
-        // version 0 is left out, so that clients that predate versions keep reading it
+        // the versions are in the header, not in the JSON
+        blob.setMinReaderVersion(3);
+        blob.setMinWriterVersion(4);
         String json = new String(OM.writeValueAsBytes(blob), StandardCharsets.UTF_8);
         Assert.assertFalse(json.contains("Version"), json);
+        DecryptedBlob<PasswordBlob> decrypted =
+                BlobCodec.decrypt(OM, KEYS, BlobCodec.encrypt(OM, KEYS, blob), PasswordBlob.class, KNOWN_NEWER);
+        Assert.assertEquals(decrypted, blob);
     }
 
     private static final SchemaVersions KNOWN = new SchemaVersions(1, 1);
+    private static final SchemaVersions KNOWN_NEWER = new SchemaVersions(3, 4);
 
-    private static DecryptedBlob<PasswordBlob> decryptRaw(String json) throws Exception {
-        return BlobCodec.decrypt(OM, KEYS, BlobCodec.encrypt(OM, KEYS, rawBlob(json)), PasswordBlob.class, KNOWN);
+    private static byte[] payload(int reader, int writer, String json) {
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        return ByteBuffer.allocate(5 + bytes.length)
+                .put(BlobCodec.VERSIONS_MARKER).putShort((short) reader).putShort((short) writer).put(bytes).array();
+    }
+
+    private static <T> DecryptedBlob<T> decryptPayload(byte[] payload, Class<T> dataClass) throws Exception {
+        return BlobCodec.decrypt(OM, KEYS, BlobCodec.encryptPayload(KEYS, payload), dataClass, KNOWN);
+    }
+
+    @Test
+    public void testPayloadWithoutHeader() throws Exception {
+        // written before the header existed: versions 0 and 0
+        DecryptedBlob<PasswordBlob> decrypted = decryptPayload(
+                "{\"data\":{\"passwords\":[{\"name\":\"a\",\"value\":\"b\"}]},\"revision\":3}"
+                        .getBytes(StandardCharsets.UTF_8), PasswordBlob.class);
+        Assert.assertEquals(decrypted, blob(3, "a", "b"));
+        Assert.assertEquals(decrypted.getMinWriterVersion(), 0);
+    }
+
+    @Test
+    public void testUnknownPayloadFormat() {
+        Assert.expectThrows(UnreadableDatabaseException.class,
+                            () -> decryptPayload(new byte[]{2, 0, 0, 0, 0, '{', '}'}, PasswordBlob.class));
+        Assert.expectThrows(UnreadableDatabaseException.class,
+                            () -> decryptPayload(new byte[0], PasswordBlob.class));
     }
 
     @DataProvider
     public Object[][] unknownData() {
         return new Object[][]{
-                {"\"future\":{\"x\":[1,2]}", "{\"passwords\":[]}"},
-                {"", "{\"passwords\":[],\"future\":true}"},
-                {"", "{\"passwords\":[{\"name\":\"a\",\"value\":\"b\",\"future\":1}]}"},
-                {"", "{\"passwords\":[],\"passkeys\":[{\"rpId\":\"a\",\"future\":\"x\"}]}"},
+                {"{\"future\":{\"x\":[1,2]},\"data\":{\"passwords\":[]},\"revision\":1}"},
+                {"{\"data\":{\"passwords\":[],\"future\":true},\"revision\":1}"},
+                {"{\"data\":{\"passwords\":[{\"name\":\"a\",\"value\":\"b\",\"future\":1}]},\"revision\":1}"},
+                {"{\"data\":{\"passwords\":[],\"passkeys\":[{\"rpId\":\"a\",\"future\":\"x\"}]},\"revision\":1}"},
         };
     }
 
     @Test(dataProvider = "unknownData")
-    public void testUnknownDataOfKnownVersionIsRefused(String extraTopLevel, String data) {
+    public void testUnknownDataOfKnownVersionIsRefused(String json) {
         // a change that forgot to raise the writer version: refused rather than dropped on the next save
-        String json = "{" + (extraTopLevel.isEmpty() ? "" : extraTopLevel + ",") + "\"data\":" + data +
-                      ",\"revision\":1,\"minWriterVersion\":1}";
-        Assert.expectThrows(UnreadableDatabaseException.class, () -> decryptRaw(json));
+        Assert.expectThrows(UnreadableDatabaseException.class,
+                            () -> decryptPayload(payload(1, 1, json), PasswordBlob.class));
     }
 
     @Test(dataProvider = "unknownData")
-    public void testUnknownDataOfNewerWriterVersionIsSkipped(String extraTopLevel, String data) throws Exception {
-        String json = "{" + (extraTopLevel.isEmpty() ? "" : extraTopLevel + ",") + "\"data\":" + data +
-                      ",\"revision\":1,\"minWriterVersion\":2}";
-        DecryptedBlob<PasswordBlob> decrypted = decryptRaw(json);
+    public void testUnknownDataOfNewerWriterVersionIsSkipped(String json) throws Exception {
+        DecryptedBlob<PasswordBlob> decrypted = decryptPayload(payload(1, 2, json), PasswordBlob.class);
         Assert.assertEquals(decrypted.getRevision(), 1);
         Assert.assertEquals(decrypted.getMinWriterVersion(), 2);
+        Assert.assertTrue(BlobCodec.isNewerWriter(decrypted.getMinWriterVersion(), KNOWN));
     }
 
     @Test
     public void testUnknownEnumValueOfNewerWriterVersion() throws Exception {
-        String json = "{\"data\":{\"accounts\":[{\"issuer\":\"a\",\"algorithm\":\"SHA3\"}]},\"revision\":1,";
-        Assert.expectThrows(UnreadableDatabaseException.class, () -> BlobCodec.decrypt(
-                OM, KEYS, BlobCodec.encrypt(OM, KEYS, rawBlob(json + "\"minWriterVersion\":1}")), OtpBlob.class, KNOWN));
-        DecryptedBlob<OtpBlob> decrypted = BlobCodec.decrypt(
-                OM, KEYS, BlobCodec.encrypt(OM, KEYS, rawBlob(json + "\"minWriterVersion\":2}")), OtpBlob.class, KNOWN);
+        String json = "{\"data\":{\"accounts\":[{\"issuer\":\"a\",\"algorithm\":\"SHA3\"}]},\"revision\":1}";
+        Assert.expectThrows(UnreadableDatabaseException.class, () -> decryptPayload(payload(1, 1, json), OtpBlob.class));
+        DecryptedBlob<OtpBlob> decrypted = decryptPayload(payload(1, 2, json), OtpBlob.class);
         Assert.assertEquals(decrypted.getData().getAccounts().get(0).getIssuer(), "a");
         Assert.assertNull(decrypted.getData().getAccounts().get(0).getAlgorithm());
     }
 
     @Test
     public void testMinReaderVersion() throws Exception {
-        Assert.assertEquals(decryptRaw("{\"data\":{\"passwords\":[]},\"revision\":1,\"minReaderVersion\":1}")
-                                    .getMinReaderVersion(), 1);
+        String json = "{\"data\":{\"passwords\":[]},\"revision\":1}";
+        Assert.assertEquals(decryptPayload(payload(1, 1, json), PasswordBlob.class).getMinReaderVersion(), 1);
         // refused also when the writer version is newer, and with data that would be readable
-        Assert.expectThrows(UnreadableDatabaseException.class, () -> decryptRaw(
-                "{\"data\":{\"passwords\":[]},\"revision\":1,\"minReaderVersion\":2,\"minWriterVersion\":2}"));
-    }
-
-    /**
-     * A blob that {@link BlobCodec#encrypt} writes as exactly {@code json}.
-     */
-    @SuppressWarnings("unchecked")
-    private static DecryptedBlob<?> rawBlob(String json) throws Exception {
-        Map<String, Object> map = OM.readValue(json, Map.class);
-        return new DecryptedBlob<Object>() {
-            @JsonValue
-            Map<String, Object> json() {
-                return map;
-            }
-        };
+        Assert.expectThrows(UnreadableDatabaseException.class, () -> decryptPayload(payload(2, 2, json), PasswordBlob.class));
+        // unsigned
+        Assert.expectThrows(UnreadableDatabaseException.class,
+                            () -> decryptPayload(payload(0xffff, 0, json), PasswordBlob.class));
     }
 
     @Test

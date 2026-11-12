@@ -7,19 +7,12 @@ package at.yawk.password.client;
  * copy: saving that would replace the newer data on the server.
  */
 public class UnreadableDatabaseException extends Exception {
-    /**
-     * The revision of the database, or -1 if not even that could be read.
-     */
-    final long revision;
-
-    UnreadableDatabaseException(Throwable cause, long revision) {
+    UnreadableDatabaseException(Throwable cause) {
         super("The database was saved by a newer version of the app, update this one to open it (" +
               cause.getMessage() + ")", cause);
-        this.revision = revision;
     }
 
-    UnreadableDatabaseException(String reason, long revision) {
+    UnreadableDatabaseException(String reason) {
         super("The database was saved by a newer version of the app, update this one to open it (" + reason + ")");
-        this.revision = revision;
     }
 }
