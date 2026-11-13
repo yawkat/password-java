@@ -1,5 +1,5 @@
 [versions]
-jackson = "2.22.4"
+jackson = "2.23.0"
 # Micronaut platform BOM, applied to :server by the Micronaut Gradle plugin
 micronaut-platform = "5.2.5"
 lombok = "1.18.48"
