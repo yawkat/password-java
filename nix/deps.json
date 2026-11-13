@@ -348,29 +348,32 @@
   "com/fasterxml#oss-parent/79": {
    "pom": "sha256-kga33Wf7E4A2V2w9/KlHoqjz4sTS2cHy0d6lGbOk2uE="
   },
-  "com/fasterxml/jackson#jackson-base/2.22.4": {
-   "pom": "sha256-UbXMV9949QpDIQ5XcHX2g5njHd5xUEVeF50knmN1gqE="
+  "com/fasterxml#oss-parent/81": {
+   "pom": "sha256-YNFGzFQ+qW499utURSc2XXqeb7ockzBxksGcjr1Gsac="
   },
-  "com/fasterxml/jackson#jackson-bom/2.22.4": {
-   "pom": "sha256-o8AGiKe/jhKEURN7aPkNkTeVejcnVgg9dFVaRyQdFjY="
+  "com/fasterxml/jackson#jackson-base/2.23.0": {
+   "pom": "sha256-Abf0gp2+xkKhvq1NVSzPl3fctQH5PzT29AAJL5vTZLQ="
   },
-  "com/fasterxml/jackson#jackson-parent/2.22": {
-   "pom": "sha256-fUWn77ad8ge+18xUuHoLsBLxCVLAlVcKJztJSF2g0Sk="
+  "com/fasterxml/jackson#jackson-bom/2.23.0": {
+   "pom": "sha256-DHHjMEICoXQKNrhhFSqZ8kWUtmMnPfscbPrpYN6CNxE="
   },
-  "com/fasterxml/jackson/core#jackson-annotations/2.22": {
-   "jar": "sha256-Id21mIB9OlGodnBOuXnZKW4cam9Hqxgm/4jG1qEnotA=",
-   "module": "sha256-PSJwREjpjf1XjF31ZG3QqYrsBAgLCKMkXPi+uKJdy10=",
-   "pom": "sha256-OMO6UqDq3j4+rMWxNJnVbhA4zLrY7Eu3lCbcIUMrRtA="
+  "com/fasterxml/jackson#jackson-parent/2.23": {
+   "pom": "sha256-12qOobhKB+w4ytmn8ECYRTXlzalseBQ8S1cqGB59iGI="
   },
-  "com/fasterxml/jackson/core#jackson-core/2.22.4": {
-   "jar": "sha256-LTDDdc3eqWV6Hh75dUeiaUtmOzVfrLTeU6CXeCsxLRo=",
-   "module": "sha256-9IozAFtJUPkK8K7XNcKcnn5D354qTWSdt6LcLpDOlvU=",
-   "pom": "sha256-NxtoWbWMP8HAgj/mbh5tarJRupmyb33OiDu7fEOQbCE="
+  "com/fasterxml/jackson/core#jackson-annotations/2.23": {
+   "jar": "sha256-5bYMMIjgiHspD/kiY5Q1RYmh2tWDdDlEt/VThmEFa0w=",
+   "module": "sha256-0syOMj96C+ekvNaq3sXF53Q2vuHSmoRZnyAhEoqn+Ok=",
+   "pom": "sha256-gNglL0di1S9xRWZ8SQgl5V+3YH8KZrg075o83fvRSSs="
   },
-  "com/fasterxml/jackson/core#jackson-databind/2.22.4": {
-   "jar": "sha256-1Mv4lHCH8wWGmCaAGROr3FBzWh+rIHShmT57xnypdKM=",
-   "module": "sha256-/fYppFUne4aWoOeVM9mVMb6n9fXtr2yrOGRmCLjLucM=",
-   "pom": "sha256-gYZ8PJnA4BTRM1VPLTDNrXjsWM8bVghwiCBOHl6zS6o="
+  "com/fasterxml/jackson/core#jackson-core/2.23.0": {
+   "jar": "sha256-RJeYvrTE7CbenMJbOcohmANog/uQXKloy+9xNtGaJdk=",
+   "module": "sha256-VdO3GfTXgsitmWiojbF9jkLokD+FYozCOz24C5lwULs=",
+   "pom": "sha256-hlcm26A6bFjSd80E9LrSDVofxmr4Duxc+TkxXC2ifro="
+  },
+  "com/fasterxml/jackson/core#jackson-databind/2.23.0": {
+   "jar": "sha256-q9Ht0nNsdk2gP+bLep3nDUjdChmK7RMWBMVkv/YvnME=",
+   "module": "sha256-VYTaj7fyzFiEUk02N4UeG2df3rdQbJRy5/otTu5vcGo=",
+   "pom": "sha256-FNG7YVaO1HDqIeJfvjK0MSLDivbZXA4pRYJHkFPMxBM="
   },
   "com/github/javaparser#javaparser-core/3.28.2": {
    "jar": "sha256-tUmaOxxAsWwGcfq+R4yar+qzgWDG/edKbBP0LYZxbs0=",
