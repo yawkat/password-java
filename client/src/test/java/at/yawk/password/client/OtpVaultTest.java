@@ -177,21 +177,21 @@ public class OtpVaultTest {
         DatabaseClient server = new DatabaseClient(this.server.getUrl(), AuthProtocol.TOTP_VAULT_PREFIX);
 
         // without a local copy, there is nothing to open
-        Assert.expectThrows(WrongPasswordException.class, () -> OtpStore.open(VaultClient.otp(
+        Assert.expectThrows(VaultResetException.class, () -> OtpStore.open(VaultClient.otp(
                 this.server.getUrl(), new MemoryStorageProvider(), VaultKey.ofExportedKey(exported))));
 
-        // with one, it opens, but saving doesn't register: the change only reaches the local copy
+        // with one, it opens, but saving doesn't register, and leaves the local copy as it was
         VaultClient<OtpBlob> client = VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported));
         OtpStore store = OtpStore.open(client);
         Assert.assertNotNull(store);
         Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.VAULT_RESET);
         Assert.assertEquals(issuers(store), List.of("A"));
-        Assert.expectThrows(WrongPasswordException.class, () -> store.add(account("B")));
+        Assert.expectThrows(VaultResetException.class, () -> store.add(account("B")));
         Assert.assertNull(server.getInstallSalt());
         OtpStore reopened = OtpStore.open(
                 VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported)));
         Assert.assertNotNull(reopened);
-        Assert.assertEquals(issuers(reopened), List.of("A", "B"));
+        Assert.assertEquals(issuers(reopened), List.of("A"));
     }
 
     /**

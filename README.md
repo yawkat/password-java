@@ -239,10 +239,11 @@ biometric check unlocks, every time. The key belongs to the server it was enable
   2FA codes; keep the PIN as safe as the codes.
 - Removing the screen lock destroys it. The app then asks for the backup password, and offers the fingerprint again.
 - *Forget fingerprint* on the lock screen deletes it.
-- Resetting the 2FA vault on the server (see [Registration](#registration)) locks out the fingerprint of every phone
-  that reaches the server, e.g. of a lost one: it deletes its key and needs the backup password again. A phone kept
-  offline still opens its local copy with the fingerprint, so after losing a phone, also regenerate the codes of
-  important accounts.
+- Resetting the 2FA vault on the server (see [Registration](#registration)) and creating it again locks out the
+  fingerprint of every phone that reaches the server, e.g. of a lost one: it deletes its key and needs the backup
+  password again. While the server has no 2FA vault (reset and not yet created again, or an outage that answers 404),
+  the fingerprint only opens the local copy, and saving needs the backup password. A phone kept offline still opens
+  its local copy with the fingerprint, so after losing a phone, also regenerate the codes of important accounts.
 
 ### Migrating from Authy
 

@@ -388,9 +388,13 @@ from a client that was unlocked with the password, and only once the server has 
 for the database, or the registration). It opens and saves the vault without the Argon2id run, but only for that
 install salt: for another one (e.g. after the vault on the server was reset and created again, which always gives a
 new install salt) it fails like a wrong password. An exported key never registers: if the server has no registration,
-the vault was reset. Then the client opens a local copy of its own install salt, marked "vault reset"; a save only
-reaches the local copy and then fails, until the vault is unlocked with its password. So resetting the 2FA vault
-locks out the exported keys of all devices, e.g. that of a lost phone. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
+the vault was reset. Then the client opens a local copy of its own install salt, marked "vault reset"; a save fails
+without changing the local copy, until the vault is unlocked with its password. Without a local copy, opening
+fails (`VaultResetException`). A 404 is unauthenticated, and may come from a proxy or from a server without its data
+during an outage, so the exported key is kept: the local copy opens offline anyway. Once the vault is created again
+on the server, it has a new install salt, and the exported key fails like a wrong password and is deleted. So
+resetting the 2FA vault and creating it again locks out the exported keys of all devices, e.g. that of a lost
+phone. The Android app keeps the 2FA vault's exported key encrypted by a Keystore key that needs a
 fingerprint, so that a fingerprint opens the 2FA vault. The exported key opens the vault as the password does, so it
 is kept as safe as the data.
 

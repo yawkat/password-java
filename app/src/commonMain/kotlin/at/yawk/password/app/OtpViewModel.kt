@@ -7,6 +7,7 @@ import at.yawk.password.client.ClientValue
 import at.yawk.password.client.OtpStore
 import at.yawk.password.client.VaultClient
 import at.yawk.password.client.VaultKey
+import at.yawk.password.client.VaultResetException
 import at.yawk.password.client.WrongPasswordException
 import at.yawk.password.model.OtpAccount
 import at.yawk.password.model.OtpBlob
@@ -144,17 +145,11 @@ class OtpViewModel(
                         _state.value = locked(config, "The 2FA vault is empty. Unlock it with the backup password.")
                         return@withLock
                     }
-                    if (opened.localReason == ClientValue.LocalReason.VAULT_RESET) {
-                        // A reset (e.g. after losing a phone) must lock out the fingerprint keys: only the backup
-                        // password opens the vault again. (Offline, the local copy still opens: the server can't
-                        // be asked.)
-                        keyStore.delete()
-                        _state.value = locked(
-                            config,
-                            "The 2FA vault was reset on the server. Unlock it with the backup password.",
-                        )
-                        return@withLock
-                    }
+                    // A server without registration (VAULT_RESET) opens the local copy, like an unreachable one, and
+                    // keeps the key: that is only what answered the request said, e.g. a proxy or a server without
+                    // its data directory during an outage, and the local copy opens offline anyway. Saving fails
+                    // until the vault is unlocked with the backup password. A vault created again on the server
+                    // (e.g. after losing a phone) has another install salt, which deletes the key below.
                     this@OtpViewModel.password = null
                     this@OtpViewModel.client = client
                     saveUrl(config.url)
@@ -170,6 +165,10 @@ class OtpViewModel(
                             "The fingerprint key is no longer valid (was the screen lock changed?). Unlock with the " +
                                 "backup password, then enable the fingerprint again."
                         }
+                        // no local copy to open, see above
+                        is VaultResetException ->
+                            "The server has no 2FA vault, and there is no local copy. Unlock it with the backup " +
+                                "password."
                         is WrongPasswordException -> {
                             // The server of the key has another vault now: it was created again, and the key is
                             // useless from now on.
@@ -660,7 +659,9 @@ class OtpViewModel(
             ClientValue.LocalReason.SERVER_COPY_OLDER ->
                 "Server copy is older than the local copy (a failed upload, or a rollback), loaded local copy"
             ClientValue.LocalReason.NOT_ON_SERVER -> "Server has no 2FA vault, loaded local copy. Saving uploads it"
-            ClientValue.LocalReason.VAULT_RESET -> "The 2FA vault was reset on the server, loaded local copy"
+            ClientValue.LocalReason.VAULT_RESET ->
+                "Server has no 2FA vault (reset, or an outage), loaded local copy. Unlock with the backup password " +
+                    "to save"
         }
     }
 }

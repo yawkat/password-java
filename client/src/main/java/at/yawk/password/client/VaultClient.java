@@ -36,8 +36,6 @@ public class VaultClient<T> {
     private final Class<T> dataClass;
     private final SchemaVersions versions;
 
-    private static final String RESET_MESSAGE =
-            "The vault was reset on the server. Unlock it with its password to create it again.";
     /**
      * The keys that {@link #save} encrypts and signs with, chosen by {@link #load}. {@code null} if nothing was loaded,
      * or if the server was unreachable and the local copy doesn't tell the install salt either (a legacy copy).
@@ -123,7 +121,7 @@ public class VaultClient<T> {
                     // An exported key belongs to a registration that is gone: the vault was reset. It reads (and
                     // saves to) a local copy of its registration, but never registers, see save.
                     if (local == null) {
-                        throw new WrongPasswordException(RESET_MESSAGE);
+                        throw new VaultResetException();
                     }
                     byte[] localSalt = BlobCodec.installSalt(local);
                     keys = localSalt == null ? null : keysFor(localSalt);
@@ -273,8 +271,8 @@ public class VaultClient<T> {
      *
      * @throws IllegalStateException if nothing was loaded yet, or the last load failed
      * @throws ReadOnlyDatabaseException if the last load found data of a newer writer version
-     * @throws WrongPasswordException if the vault was reset on the server and this client has an exported key, which
-     * can't register it again (see {@link ClientValue.LocalReason#VAULT_RESET}). The local copy is saved anyway.
+     * @throws VaultResetException if the vault was reset on the server and this client has an exported key, which
+     * can't register it again (see {@link ClientValue.LocalReason#VAULT_RESET}). Nothing is saved, not even locally.
      */
     public void save(T blob) throws Exception {
         if (!loaded) {
@@ -282,6 +280,11 @@ public class VaultClient<T> {
         }
         if (readOnly) {
             throw new ReadOnlyDatabaseException();
+        }
+        if (!registered && !key.mayRegister()) {
+            // The server may only seem unregistered (e.g. a proxy answering 404 during an outage). A save that can't
+            // reach it must not raise the revision of the local copy, which would then hide the server copy as older.
+            throw new VaultResetException();
         }
         KeyMaterial keys = this.keys;
         if (keys == null) {
@@ -298,9 +301,6 @@ public class VaultClient<T> {
         revision = decrypted.getRevision();
 
         if (!registered) {
-            if (!key.mayRegister()) {
-                throw new WrongPasswordException(RESET_MESSAGE);
-            }
             databaseClient.register(keys);
             registered = true;
             keysToRegister = null;
