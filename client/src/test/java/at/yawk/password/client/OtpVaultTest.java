@@ -185,13 +185,43 @@ public class OtpVaultTest {
         OtpStore store = OtpStore.open(client);
         Assert.assertNotNull(store);
         Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.VAULT_RESET);
+        Assert.assertTrue(store.isReadOnly());
         Assert.assertEquals(issuers(store), List.of("A"));
         Assert.expectThrows(VaultResetException.class, () -> store.add(account("B")));
+        Assert.expectThrows(VaultResetException.class, () -> client.save(new OtpBlob()));
         Assert.assertNull(server.getInstallSalt());
         OtpStore reopened = OtpStore.open(
                 VaultClient.otp(this.server.getUrl(), storage, VaultKey.ofExportedKey(exported)));
         Assert.assertNotNull(reopened);
         Assert.assertEquals(issuers(reopened), List.of("A"));
+    }
+
+    /**
+     * A load that finds the server without registration, then one that can't reach it: the second doesn't know the
+     * server state anymore (the 404 may have come from a proxy that is now down too), so it is a plain offline load,
+     * not a reset.
+     */
+    @Test
+    public void unreachableAfterUnregistered() throws Exception {
+        LocalStorageProvider storage = new MemoryStorageProvider();
+        byte[] exported;
+        try (TestServer old = TestServer.start()) {
+            VaultClient<OtpBlob> client = VaultClient.otp(old.getUrl(), storage, VaultKey.ofPassword(BACKUP_PASSWORD));
+            create(client).add(account("A"));
+            exported = client.exportKey();
+        }
+        OtpStore store;
+        try (TestServer empty = TestServer.start()) {
+            store = OtpStore.open(VaultClient.otp(empty.getUrl(), storage, VaultKey.ofExportedKey(exported)));
+            Assert.assertNotNull(store);
+            Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.VAULT_RESET);
+        }
+        store.reload();
+        Assert.assertEquals(store.getLocalReason(), ClientValue.LocalReason.SERVER_UNAVAILABLE);
+        Assert.assertFalse(store.isReadOnly());
+        Assert.assertEquals(issuers(store), List.of("A"));
+        // the save fails because the server is unreachable, not because it was reset
+        Assert.expectThrows(IOException.class, () -> store.add(account("B")));
     }
 
     /**

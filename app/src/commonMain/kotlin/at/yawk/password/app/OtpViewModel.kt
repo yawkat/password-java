@@ -172,8 +172,7 @@ class OtpViewModel(
                             // The server of the key has another vault now: it was created again, and the key is
                             // useless from now on.
                             keyStore.delete()
-                            "The 2FA vault was created again on the server. Unlock it with the backup password, then " +
-                                "enable the fingerprint again."
+                            CREATED_AGAIN_MESSAGE
                         }
                         is AuthenticationException -> e.message
                         else -> unlockErrorMessage(e)
@@ -596,6 +595,15 @@ class OtpViewModel(
                 } catch (e: Exception) {
                     log.warn(errorTitle, e)
                     if (session != operationSession) return@withLock null
+                    val config = config
+                    if (e is WrongPasswordException && password == null && config != null) {
+                        // Opened with the fingerprint, and a reload found another vault on the server: it was created
+                        // again (e.g. after losing a phone), so the key is useless, as in unlockWithFingerprint.
+                        keyStore?.delete()
+                        lockNow()
+                        _state.value = locked(config, CREATED_AGAIN_MESSAGE)
+                        return@withLock null
+                    }
                     updateUnlocked {
                         it.copy(
                             busy = false,
@@ -627,6 +635,10 @@ class OtpViewModel(
     }
 
     internal companion object {
+        const val CREATED_AGAIN_MESSAGE =
+            "The 2FA vault was created again on the server. Unlock it with the backup password, then enable the " +
+                "fingerprint again."
+
         fun accountCount(count: Int) = if (count == 1) "1 account" else "$count accounts"
 
         fun unlockErrorMessage(e: Exception): String {

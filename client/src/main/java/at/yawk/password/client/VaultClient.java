@@ -151,10 +151,13 @@ public class VaultClient<T> {
                 throw e;
             }
             DecryptedBlob<T> localBlob = decryptLocal(local);
-            if (!keysFromServer) {
+            // An earlier load that found the server without registration is no longer known to be right: e.g. a
+            // proxy that answered 404, now down entirely. Only a known install salt of the server is kept.
+            if (!keysFromServer || !registered) {
                 // Nothing is known about the server: assume the local copy's registration, but never register. A
                 // legacy copy has none, so it can only be saved once the server is reachable.
                 registered = true;
+                keysFromServer = false;
                 byte[] localSalt = BlobCodec.installSalt(local);
                 keys = localSalt == null ? null : keysFor(localSalt);
             }
@@ -167,7 +170,9 @@ public class VaultClient<T> {
                 revision = 0;
                 return new ClientValue<>(null, reasonWithoutRemote, false);
             }
-            return loaded(decryptLocal(local), reasonWithoutRemote);
+            // an exported key can't save to an unregistered server, see save
+            return loaded(decryptLocal(local), reasonWithoutRemote,
+                          reasonWithoutRemote == ClientValue.LocalReason.VAULT_RESET);
         }
 
         DecryptedBlob<T> remoteBlob;
@@ -279,13 +284,13 @@ public class VaultClient<T> {
         if (!loaded) {
             throw new IllegalStateException("Load the database before saving (the last load failed)");
         }
-        if (readOnly) {
-            throw new ReadOnlyDatabaseException();
-        }
         if (!registered && !key.mayRegister()) {
             // The server may only seem unregistered (e.g. a proxy answering 404 during an outage). A save that can't
             // reach it must not raise the revision of the local copy, which would then hide the server copy as older.
             throw new VaultResetException();
+        }
+        if (readOnly) {
+            throw new ReadOnlyDatabaseException();
         }
         KeyMaterial keys = this.keys;
         if (keys == null) {

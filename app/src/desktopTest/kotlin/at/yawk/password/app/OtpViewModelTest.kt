@@ -483,6 +483,7 @@ class OtpViewModelTest {
         vm.open(config)
         val unlocked = vm.await<OtpState.Unlocked>()
         assertEquals(ClientValue.LocalReason.VAULT_RESET, unlocked.localReason)
+        assertTrue(unlocked.readOnly, "the screen offers no edits")
         assertEquals(listOf("A"), unlocked.accounts.map { it.issuer })
         assertNotNull(keyStore.key, "kept")
         assertEquals(false, runBlocking { vm.save(account("B")).await() }, "saving needs the backup password")
@@ -503,6 +504,38 @@ class OtpViewModelTest {
         OtpStore.createEmpty(other).add(account("C"))
         vm.open(config)
         val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
+        assertTrue(locked.error!!.contains("created again"), locked.error)
+        assertNull(keyStore.key, "deleted")
+        assertEquals(false, locked.fingerprint)
+    }
+
+    /**
+     * A reload of a session opened with the fingerprint that finds the vault created again deletes the key and locks,
+     * like a fingerprint unlock would.
+     */
+    @Test
+    fun fingerprintReloadAfterRecreate() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.close()
+
+        vm.open(config)
+        assertNull(vm.await<OtpState.Unlocked>().localReason, "opened with the fingerprint")
+
+        server.totpRegistration.set(null)
+        server.totpDb.set(null)
+        val other = VaultClient.otp(server.url, MemoryStorageProvider(), VaultKey.ofPassword("backup".encodeToByteArray()))
+        assertNull(OtpStore.open(other))
+        OtpStore.createEmpty(other).add(account("C"))
+
+        assertFalse(runBlocking { vm.reload().await() })
+        val locked = vm.await<OtpState.Locked>()
         assertTrue(locked.error!!.contains("created again"), locked.error)
         assertNull(keyStore.key, "deleted")
         assertEquals(false, locked.fingerprint)

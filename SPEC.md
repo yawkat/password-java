@@ -359,7 +359,8 @@ files plus `latest`). Keys are derived once per install salt and kept in memory 
 2. If a request fails (network error, 403, 429, ...), use the local copy, marked "server unavailable"; without a
    local copy the error is raised. A failed load leaves nothing to save: the client must load successfully first. A wrong password gets 403 from the server and then fails to decrypt the local copy,
    so it is reported as a wrong password. Saves keep using the server's install salt if it is known, else that of the
-   local copy. A legacy local copy has none, so it can't be saved until the server is reachable.
+   local copy. That an earlier load found the server without registration is not kept: it may have been an outage
+   (e.g. a proxy answering 404), so the load is like one that never reached the server. A legacy local copy has none, so it can't be saved until the server is reachable.
 3. Otherwise decrypt the remote blob.
    - If that fails, fall back to the local copy ("server copy invalid"). If there is no local copy, or it also fails,
      the remote error is raised.
@@ -388,8 +389,8 @@ from a client that was unlocked with the password, and only once the server has 
 for the database, or the registration). It opens and saves the vault without the Argon2id run, but only for that
 install salt: for another one (e.g. after the vault on the server was reset and created again, which always gives a
 new install salt) it fails like a wrong password. An exported key never registers: if the server has no registration,
-the vault was reset. Then the client opens a local copy of its own install salt, marked "vault reset"; a save fails
-without changing the local copy, until the vault is unlocked with its password. Without a local copy, opening
+the vault was reset. Then the client opens a local copy of its own install salt, marked "vault reset", read-only: a save
+fails without changing the local copy, until the vault is unlocked with its password. Without a local copy, opening
 fails (`VaultResetException`). A 404 is unauthenticated, and may come from a proxy or from a server without its data
 during an outage, so the exported key is kept: the local copy opens offline anyway. Once the vault is created again
 on the server, it has a new install salt, and the exported key fails like a wrong password and is deleted. So

@@ -729,6 +729,16 @@ internal fun ReadOnlyBanner() = WarningBanner(READ_ONLY_TEXT)
 
 internal const val READ_ONLY_TEXT = "Saved by a newer version of the app: read-only. Update the app to edit."
 
+/**
+ * Shown while the 2FA vault, opened with the fingerprint, has no registration on the server (`VAULT_RESET`): the
+ * local copy can be read, but not saved.
+ */
+@Composable
+internal fun VaultResetBanner() = WarningBanner(VAULT_RESET_TEXT)
+
+internal const val VAULT_RESET_TEXT =
+    "Showing the local copy, read-only: the server has no 2FA vault (it was reset, or has a problem)."
+
 @Composable
 internal fun OfflineBanner() =
     WarningBanner("Showing the local copy, not the server copy. Saving will overwrite the server copy.")

@@ -288,8 +288,7 @@ private fun OtpScreen(
     val latest by rememberUpdatedState(state)
     val busy = state.busy
     // the store refuses to save a read-only vault anyway; this disables the actions that would
-    // VAULT_RESET: opened with the fingerprint, which can't save to a server without registration
-    val editable = !busy && !state.readOnly && state.localReason != ClientValue.LocalReason.VAULT_RESET
+    val editable = !busy && !state.readOnly
     val visible = remember(state.accounts, ui.query.text) { filterAccounts(state.accounts, ui.query.text) }
 
     // ---- actions ----
@@ -456,11 +455,16 @@ private fun OtpScreen(
                     TextButton(onClick = ::lock, enabled = !busy) { Text("Lock") }
                 }
                 HorizontalDivider()
-                if (state.localReason != null) {
-                    OfflineBanner()
-                }
-                if (state.readOnly) {
-                    ReadOnlyBanner()
+                if (state.localReason == ClientValue.LocalReason.VAULT_RESET) {
+                    // read-only too, but not because of a newer version
+                    VaultResetBanner()
+                } else {
+                    if (state.localReason != null) {
+                        OfflineBanner()
+                    }
+                    if (state.readOnly) {
+                        ReadOnlyBanner()
+                    }
                 }
                 if (state.offerFingerprint) {
                     FingerprintOffer(

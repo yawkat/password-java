@@ -52,9 +52,9 @@ public abstract class VaultStore<T> {
     }
 
     /**
-     * @return Whether a client of a newer writer version saved the data: it can be shown, but every
-     * modification fails with {@link ReadOnlyDatabaseException}, since saving would drop what this client
-     * skipped.
+     * @return Whether the data can only be shown, see {@link ClientValue#isReadOnly()}: every modification fails,
+     * with {@link VaultResetException} for {@link ClientValue.LocalReason#VAULT_RESET}, else with
+     * {@link ReadOnlyDatabaseException}.
      */
     public boolean isReadOnly() {
         return readOnly;
@@ -73,7 +73,8 @@ public abstract class VaultStore<T> {
      */
     synchronized void modify(UnaryOperator<T> operation) throws Exception {
         if (readOnly) {
-            throw new ReadOnlyDatabaseException();
+            throw localReason == ClientValue.LocalReason.VAULT_RESET ?
+                    new VaultResetException() : new ReadOnlyDatabaseException();
         }
         T modified = operation.apply(data);
         client.save(modified);
