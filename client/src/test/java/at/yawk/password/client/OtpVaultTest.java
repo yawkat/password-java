@@ -233,7 +233,7 @@ public class OtpVaultTest {
     public void noSaveAfterFailedLoad() throws Exception {
         VaultClient<OtpBlob> client = VaultClient.otp(server.getUrl(), new MemoryStorageProvider(),
                                                       VaultKey.ofExportedKey(new byte[VaultKey.EXPORTED_LENGTH]));
-        Assert.expectThrows(WrongPasswordException.class, client::load);
+        Assert.expectThrows(VaultResetException.class, client::load);
         Assert.expectThrows(IllegalStateException.class, () -> client.save(new OtpBlob()));
     }
 

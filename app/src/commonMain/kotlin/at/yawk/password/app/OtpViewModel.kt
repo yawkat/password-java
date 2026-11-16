@@ -167,8 +167,7 @@ class OtpViewModel(
                         }
                         // no local copy to open, see above
                         is VaultResetException ->
-                            "The server has no 2FA vault, and there is no local copy. Unlock it with the backup " +
-                                "password."
+                            "The server has no 2FA vault (reset, or an outage), and there is no local copy to open."
                         is WrongPasswordException -> {
                             // The server of the key has another vault now: it was created again, and the key is
                             // useless from now on.
@@ -644,7 +643,7 @@ class OtpViewModel(
 
         fun operationErrorText(e: Exception): String {
             val message = e.message ?: e.toString()
-            return if (e is WrongPasswordException) {
+            return if (e is WrongPasswordException || e is VaultResetException) {
                 message
             } else {
                 "The change could not be saved to the server:\n$message\n\nIt may have been written to the local " +
@@ -660,8 +659,7 @@ class OtpViewModel(
                 "Server copy is older than the local copy (a failed upload, or a rollback), loaded local copy"
             ClientValue.LocalReason.NOT_ON_SERVER -> "Server has no 2FA vault, loaded local copy. Saving uploads it"
             ClientValue.LocalReason.VAULT_RESET ->
-                "Server has no 2FA vault (reset, or an outage), loaded local copy. Unlock with the backup password " +
-                    "to save"
+                "Server has no 2FA vault (reset, or an outage), loaded local copy read-only"
         }
     }
 }

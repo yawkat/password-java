@@ -122,8 +122,9 @@ rejects the new password, since it can't decrypt that copy. The old timestamped 
 the old password.
 
 The 2FA vault is reset the same way, with `totp/verifier` and `totp/latest`, independently of the password vault.
-This also locks out the devices that open it with a fingerprint, e.g. a lost phone: they need the vault's password
-again.
+Once it is created again (unlock it with the backup password on a trusted device, then save), the devices that open
+it with a fingerprint are locked out, e.g. a lost phone: they need the vault's password again. Until then, they still
+open their local copy read-only, so after losing a phone, create the vault again right away.
 
 ### Migrating from the old protocol
 

@@ -45,8 +45,9 @@ public class ClientValue<T> {
         NOT_ON_SERVER,
         /**
          * The server has no registration, and the client has an exported key ({@link VaultKey#ofExportedKey}), which
-         * can't create the vault again: it was reset on the server. Saves only reach the local copy, and fail. Unlock
-         * with the password to create the vault again.
+         * can't create the vault again: it was reset on the server, or whatever answered in its place (e.g. a proxy
+         * during an outage) says so. Saves fail with {@link VaultResetException}, without changing the local copy.
+         * Unlock with the password to create the vault again.
          */
         VAULT_RESET,
     }

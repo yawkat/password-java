@@ -118,8 +118,9 @@ public class VaultClient<T> {
                     }
                     keys = keysToRegister;
                 } else {
-                    // An exported key belongs to a registration that is gone: the vault was reset. It reads (and
-                    // saves to) a local copy of its registration, but never registers, see save.
+                    // An exported key belongs to a registration that is gone: the vault was reset (or the server
+                    // only seems unregistered, e.g. during an outage). It reads a local copy of its registration,
+                    // but never saves or registers, see save.
                     if (local == null) {
                         throw new VaultResetException();
                     }

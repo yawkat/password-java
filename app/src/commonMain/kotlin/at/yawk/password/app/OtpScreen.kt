@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import at.yawk.password.client.ClientValue
 import at.yawk.password.model.OtpAccount
 import at.yawk.password.model.OtpAlgorithm
 import at.yawk.password.otp.Totp
@@ -287,7 +288,8 @@ private fun OtpScreen(
     val latest by rememberUpdatedState(state)
     val busy = state.busy
     // the store refuses to save a read-only vault anyway; this disables the actions that would
-    val editable = !busy && !state.readOnly
+    // VAULT_RESET: opened with the fingerprint, which can't save to a server without registration
+    val editable = !busy && !state.readOnly && state.localReason != ClientValue.LocalReason.VAULT_RESET
     val visible = remember(state.accounts, ui.query.text) { filterAccounts(state.accounts, ui.query.text) }
 
     // ---- actions ----
