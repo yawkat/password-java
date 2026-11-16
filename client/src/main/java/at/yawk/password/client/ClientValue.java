@@ -17,8 +17,8 @@ public class ClientValue<T> {
      */
     @Nullable private final LocalReason localReason;
     /**
-     * Whether a client of a newer writer version saved the database: it can be shown, but saving it would
-     * drop what this client skipped, so {@link VaultClient#save} refuses.
+     * Whether the database can only be shown, and {@link VaultClient#save} refuses: a client of a newer writer version
+     * saved it (saving would drop what this client skipped), or the reason is {@link LocalReason#VAULT_RESET}.
      */
     private final boolean readOnly;
 
@@ -45,8 +45,9 @@ public class ClientValue<T> {
         NOT_ON_SERVER,
         /**
          * The server has no registration, and the client has an exported key ({@link VaultKey#ofExportedKey}), which
-         * can't create the vault again: it was reset on the server. Saves only reach the local copy, and fail. Unlock
-         * with the password to create the vault again.
+         * can't create the vault again: it was reset on the server, or whatever answered in its place (e.g. a proxy
+         * during an outage) says so. Read-only: saves fail with {@link VaultResetException}, without changing the
+         * local copy. Unlock with the password to create the vault again.
          */
         VAULT_RESET,
     }

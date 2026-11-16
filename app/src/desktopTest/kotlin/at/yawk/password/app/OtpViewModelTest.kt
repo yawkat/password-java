@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import at.yawk.password.AuthProtocol
 import at.yawk.password.MemoryStorageProvider
 import at.yawk.password.client.ClientValue
+import at.yawk.password.client.OtpStore
 import at.yawk.password.client.VaultClient
 import at.yawk.password.client.VaultKey
 import at.yawk.password.model.OtpAccount
@@ -459,8 +460,9 @@ class OtpViewModelTest {
     }
 
     /**
-     * Resetting the vault on the server locks out the fingerprint (e.g. of a lost phone): the key is deleted, although
-     * it still opens the local copy.
+     * A server without registration (a reset, or e.g. a proxy answering 404 during an outage) opens the local copy
+     * with the fingerprint and keeps the key: a 404 is no proof that the key is useless, and the local copy opens
+     * offline anyway. Saving needs the backup password. Once the vault is created again, the key is deleted.
      */
     @Test
     fun fingerprintAfterReset() {
@@ -474,13 +476,94 @@ class OtpViewModelTest {
         vm.awaitIdle()
         vm.close()
 
+        val registration = server.totpRegistration.get()
+        val db = server.totpDb.get()
         server.totpRegistration.set(null)
         server.totpDb.set(null)
         vm.open(config)
+        val unlocked = vm.await<OtpState.Unlocked>()
+        assertEquals(ClientValue.LocalReason.VAULT_RESET, unlocked.localReason)
+        assertTrue(unlocked.readOnly, "the screen offers no edits")
+        assertEquals(listOf("A"), unlocked.accounts.map { it.issuer })
+        assertNotNull(keyStore.key, "kept")
+        assertEquals(false, runBlocking { vm.save(account("B")).await() }, "saving needs the backup password")
+        vm.close()
+
+        // the outage is over: the key opens the server copy again
+        server.totpRegistration.set(registration)
+        server.totpDb.set(db)
+        vm.open(config)
+        assertNull(vm.await<OtpState.Unlocked>().localReason)
+        vm.close()
+
+        // created again on the server (by another device): the key is deleted
+        server.totpRegistration.set(null)
+        server.totpDb.set(null)
+        val other = VaultClient.otp(server.url, MemoryStorageProvider(), VaultKey.ofPassword("backup".encodeToByteArray()))
+        assertNull(OtpStore.open(other))
+        OtpStore.createEmpty(other).add(account("C"))
+        vm.open(config)
         val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
-        assertTrue(locked.error!!.contains("reset"), locked.error)
+        assertTrue(locked.error!!.contains("created again"), locked.error)
         assertNull(keyStore.key, "deleted")
         assertEquals(false, locked.fingerprint)
+    }
+
+    /**
+     * A reload of a session opened with the fingerprint that finds the vault created again deletes the key and locks,
+     * like a fingerprint unlock would.
+     */
+    @Test
+    fun fingerprintReloadAfterRecreate() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.close()
+
+        vm.open(config)
+        assertNull(vm.await<OtpState.Unlocked>().localReason, "opened with the fingerprint")
+
+        server.totpRegistration.set(null)
+        server.totpDb.set(null)
+        val other = VaultClient.otp(server.url, MemoryStorageProvider(), VaultKey.ofPassword("backup".encodeToByteArray()))
+        assertNull(OtpStore.open(other))
+        OtpStore.createEmpty(other).add(account("C"))
+
+        assertFalse(runBlocking { vm.reload().await() })
+        val locked = vm.await<OtpState.Locked>()
+        assertTrue(locked.error!!.contains("created again"), locked.error)
+        assertNull(keyStore.key, "deleted")
+        assertEquals(false, locked.fingerprint)
+    }
+
+    /**
+     * Without a local copy, a server without registration leaves nothing to open, but still keeps the key.
+     */
+    @Test
+    fun fingerprintAfterResetWithoutLocalCopy() {
+        existingVault()
+        val keyStore = FakeOtpKeyStore()
+        val vm = fingerprintViewModel(keyStore, FakeAuthenticator())
+        vm.open(config)
+        vm.unlock("backup")
+        vm.await<OtpState.Unlocked>()
+        vm.enableFingerprint()
+        vm.awaitIdle()
+        vm.close()
+
+        server.totpRegistration.set(null)
+        server.totpDb.set(null)
+        platform.otpStorage = MemoryStorageProvider()
+        vm.open(config)
+        val locked = vm.await { it is OtpState.Locked && it.error != null } as OtpState.Locked
+        assertTrue(locked.error!!.contains("no local copy"), locked.error)
+        assertNotNull(keyStore.key, "kept")
+        assertEquals(true, locked.fingerprint)
     }
 
     @Test

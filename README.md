@@ -122,8 +122,9 @@ rejects the new password, since it can't decrypt that copy. The old timestamped 
 the old password.
 
 The 2FA vault is reset the same way, with `totp/verifier` and `totp/latest`, independently of the password vault.
-This also locks out the devices that open it with a fingerprint, e.g. a lost phone: they need the vault's password
-again.
+Once it is created again (unlock it with the backup password on a trusted device, then save), the devices that open
+it with a fingerprint are locked out, e.g. a lost phone: they need the vault's password again. Until then, they still
+open their local copy read-only, so after losing a phone, create the vault again right away.
 
 ### Migrating from the old protocol
 
@@ -239,10 +240,11 @@ biometric check unlocks, every time. The key belongs to the server it was enable
   2FA codes; keep the PIN as safe as the codes.
 - Removing the screen lock destroys it. The app then asks for the backup password, and offers the fingerprint again.
 - *Forget fingerprint* on the lock screen deletes it.
-- Resetting the 2FA vault on the server (see [Registration](#registration)) locks out the fingerprint of every phone
-  that reaches the server, e.g. of a lost one: it deletes its key and needs the backup password again. A phone kept
-  offline still opens its local copy with the fingerprint, so after losing a phone, also regenerate the codes of
-  important accounts.
+- Resetting the 2FA vault on the server (see [Registration](#registration)) and creating it again locks out the
+  fingerprint of every phone that reaches the server, e.g. of a lost one: it deletes its key and needs the backup
+  password again. While the server has no 2FA vault (reset and not yet created again, or an outage that answers 404),
+  the fingerprint only opens the local copy, and saving needs the backup password. A phone kept offline still opens
+  its local copy with the fingerprint, so after losing a phone, also regenerate the codes of important accounts.
 
 ### Migrating from Authy
 

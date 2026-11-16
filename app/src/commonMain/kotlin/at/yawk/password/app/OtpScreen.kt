@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import at.yawk.password.client.ClientValue
 import at.yawk.password.model.OtpAccount
 import at.yawk.password.model.OtpAlgorithm
 import at.yawk.password.otp.Totp
@@ -454,11 +455,16 @@ private fun OtpScreen(
                     TextButton(onClick = ::lock, enabled = !busy) { Text("Lock") }
                 }
                 HorizontalDivider()
-                if (state.localReason != null) {
-                    OfflineBanner()
-                }
-                if (state.readOnly) {
-                    ReadOnlyBanner()
+                if (state.localReason == ClientValue.LocalReason.VAULT_RESET) {
+                    // read-only too, but not because of a newer version
+                    VaultResetBanner()
+                } else {
+                    if (state.localReason != null) {
+                        OfflineBanner()
+                    }
+                    if (state.readOnly) {
+                        ReadOnlyBanner()
+                    }
                 }
                 if (state.offerFingerprint) {
                     FingerprintOffer(
