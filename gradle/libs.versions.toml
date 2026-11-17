@@ -1,7 +1,7 @@
 [versions]
 jackson = "2.23.0"
 # Micronaut platform BOM, applied to :server by the Micronaut Gradle plugin
-micronaut-platform = "5.2.5"
+micronaut-platform = "5.2.6"
 lombok = "1.18.48"
 slf4j = "2.0.20"
 kotlin = "2.4.21"
@@ -32,7 +32,7 @@ jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.1.
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 testng = { module = "org.testng:testng", version = "7.12.0" }
-bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.86" }
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.87" }
 jopt-simple = { module = "net.sf.jopt-simple:jopt-simple", version = "5.0.4" }
 # Argon2id (WebAssembly) for the emergency web client that the server serves
 hash-wasm = { module = "org.webjars.npm:hash-wasm", version = "4.12.0" }
