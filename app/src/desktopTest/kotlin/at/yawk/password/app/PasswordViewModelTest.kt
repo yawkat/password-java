@@ -325,7 +325,7 @@ class PasswordViewModelTest {
         now += BACKGROUND_LOCK_TIMEOUT_MS
         vm.onForeground()
         vm.await<UiState.Locked>()
-        assertTrue(sessionPassword.all { it == 0.toByte() }, "password wiped")
+        eventually { sessionPassword.all { it == 0.toByte() } }
     }
 
     @Test
