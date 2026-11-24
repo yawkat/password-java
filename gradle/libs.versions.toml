@@ -16,7 +16,7 @@ androidx-activity = "1.13.0"
 # the passkey provider of the Android app (Android 14 and later)
 androidx-credentials = "1.6.0"
 # QR code scanning in the Android app: camera preview and frames, and the decoder (no Play services)
-androidx-camera = "1.6.2"
+androidx-camera = "1.7.0"
 zxing = "3.5.4"
 androidx-test = "1.7.0"
 androidx-test-junit = "1.3.0"
