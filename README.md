@@ -388,7 +388,7 @@ nix flake check -L   # builds everything except the Android app, runs the Gradle
 
 ```nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.11-small";
   inputs.password-java = {
     url = "github:yawkat/password-java";
     inputs.nixpkgs.follows = "nixpkgs";
