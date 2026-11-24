@@ -1,7 +1,7 @@
 {
   description = "password-java: encrypted password database server and client";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.11-small";
 
   outputs =
     { self, nixpkgs }:
